@@ -1,7 +1,4 @@
-Title: Smithay project
-URL:
-save_as: index.html
-status: hidden
+Title: About
 
 This is the website of the smithay project, home of several wayland-related rust crates.
 
