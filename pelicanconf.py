@@ -12,6 +12,8 @@ TIMEZONE = 'Europe/Paris'
 
 DEFAULT_LANG = 'en'
 
+THEME = ''
+
 # Feed generation is usually not desired when developing
 FEED_ALL_ATOM = None
 CATEGORY_FEED_ATOM = None
@@ -23,7 +25,7 @@ AUTHOR_FEED_RSS = None
 LINKS = ()
 
 # Social widget
-SOCIAL = (('SMithay on Github', 'https://github.com/Smithay/'),)
+SOCIAL = (('Smithay on Github', 'https://github.com/Smithay/'),)
 
 DEFAULT_PAGINATION = 10
 
