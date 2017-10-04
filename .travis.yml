@@ -2,7 +2,7 @@ language: python
 
 branches:
   only:
-    - master
+    - content
 
 install:
   - pip install pelican
@@ -16,8 +16,6 @@ deploy:
     github_token: $GITHUB_TOKEN
     local_dir: output
     target_branch: master
-    on:
-        branch: content
 
 notifications:
     webhooks:
