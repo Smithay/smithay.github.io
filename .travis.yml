@@ -5,7 +5,7 @@ branches:
     - content
 
 install:
-  - pip install pelican ghp-import
+  - pip install pelican ghp-import markdown
 
 script:
   - make publish github
