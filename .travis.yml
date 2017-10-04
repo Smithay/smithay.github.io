@@ -1,0 +1,29 @@
+language: python
+
+branches:
+  only:
+    - master
+
+install:
+  - pip install pelican
+
+script:
+  - make publish
+
+deploy:
+    provider: pages
+    skip_cleanup: true
+    github_token: $GITHUB_TOKEN
+    local_dir: output
+    target_branch: master
+    on:
+        branch: content
+
+notifications:
+    webhooks:
+        urls:
+            - "https://scalar.vector.im/api/neb/services/hooks/dHJhdmlzLWNpLyU0MGxldmFucyUzQXNhZmFyYWRlZy5uZXQvJTIxRkt4aGprSUNwakJWelZlQ2RGJTNBc2FmYXJhZGVnLm5ldA"
+        on_success: change
+        on_failure: always
+        on_start: never
+
