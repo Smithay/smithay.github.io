@@ -8,14 +8,7 @@ install:
   - pip install pelican
 
 script:
-  - make publish
-
-deploy:
-    provider: pages
-    skip_cleanup: true
-    github_token: $GITHUB_TOKEN
-    local_dir: output
-    target_branch: master
+  - make publish github
 
 notifications:
     webhooks:
