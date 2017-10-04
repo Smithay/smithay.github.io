@@ -5,7 +5,7 @@ This is the website of the smithay project, home of several wayland-related rust
 The project is named after its flagship crate [smithay](https://github.com/Smithay/smithay), a library for
 making wayland compositors in rust, but is also home of [wayland-rs](https://github.com/Smithay/wayland-rs),
 a group of low-level bindings to libwayland, as well as a few other crates, either wayland utilities or
-needed for smithay, as well as the [Smithay book](https://smithay.github.io/book) aiming to be an in-depth
+needed for smithay, and the [Smithay book](https://smithay.github.io/book) aiming to be an in-depth
 explanation of wayland's structure and of how smithay and the wayland-rs crates can be used (it's currently
 WIP, only containing a good part of the wayland description).
 
