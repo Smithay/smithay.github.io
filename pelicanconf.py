@@ -6,13 +6,26 @@ AUTHOR = 'Victor Berger'
 SITENAME = 'Smithay project'
 SITEURL = ''
 
+SITESUBTITLE = 'The rusty smithy for wayland compositors'
+SITEIMAGE = None
+DESCRIPTION = 'Smithay is project hosting tools to wirte wayland clients and compositors.'
+
+LINKS = [
+]
+
+ICONS = [
+    ('github', 'https://github.com/Smithay'),
+]
+
+PYGMENTS_STYLE = 'default'
+
 PATH = 'content'
 
 TIMEZONE = 'Europe/Paris'
 
 DEFAULT_LANG = 'en'
 
-THEME = 'themes/basic'
+THEME = 'themes/pelican-alchemy/alchemy'
 
 # Feed generation is usually not desired when developing
 FEED_ALL_ATOM = None
@@ -21,11 +34,7 @@ TRANSLATION_FEED_ATOM = None
 AUTHOR_FEED_ATOM = None
 AUTHOR_FEED_RSS = None
 
-# Blogroll
-LINKS = ()
-
-# Social widget
-SOCIAL = (('Smithay on Github', 'https://github.com/Smithay/'),)
+GITHUB_URL = 'https://github.com/Smithay/'
 
 DEFAULT_PAGINATION = 10
 
