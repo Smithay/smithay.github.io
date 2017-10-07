@@ -14,7 +14,7 @@ If you already know about this protocol, feel free to jump to next section.
 
 ## Wayland background
 
-The [wayland protocol](https://wayland.freedesktop.org/) aims at replacing the X11 protocol as the standart
+The [wayland protocol](https://wayland.freedesktop.org/) aims at replacing the X11 protocol as the standard
 communication mean between graphical client apps and the display server on linux. The rationale for this is
 that given how X11 is old, has accumulated a lot of debt over the years, and is full of security holes, it's
 better to just start over with a new protocol. The project has been going for a few years now and adoption
