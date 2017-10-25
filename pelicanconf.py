@@ -7,7 +7,7 @@ SITENAME = 'Smithay project'
 SITEURL = ''
 
 SITESUBTITLE = 'The rusty smithy for wayland compositors'
-SITEIMAGE = None
+SITEIMAGE = '/images/smithay_logo.svg'
 DESCRIPTION = 'Smithay is project hosting tools to wirte wayland clients and compositors.'
 
 LINKS = [
