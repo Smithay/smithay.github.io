@@ -26,3 +26,5 @@ Smithay dependencies:
   Smithay to gain direct access to the monitors of a computer.
 - [gbm.rs](https://github.com/Smithay/gbm.rs) is a binding crate over libgbm, the Generic Buffer Manager, which
   allows easier handling of memory buffers in combination with DRM to ease making smithay more portable.
+
+Smithay's logo was kindly designed by [Amalasunthe](https://amalasunthe.deviantart.com/).
