@@ -11,12 +11,10 @@ WIP, only containing a good part of the wayland description).
 
 Wayland utilities:
 
-- [wayland-window](https://github.com/Smithay/wayland-window) is a small utility crate for writing wayland
-  client apps. It can handle for you the work of drawing the decorations of your windows. These are not
-  beautiful and fancy decorations, but they allow basic interaction for the user.
-- [wayland-kbd](https://github.com/Smithay/wayland-kbd) is an other small utility for wayland clients. This
-  one handles for you the handling of keyboard events and their interpretation with the keymap into unicode
-  text.
+- [smithay-client-toolkit](https://github.com/Smithay/client-toolkit) is an utility crate
+  to simplify the writing of wayland clients. In mostly include general functionalities
+  to factor-out the redundants parts of writing a client, allowing to focus on the
+  particularities of each specific app. 
 
 Smithay dependencies:
 
