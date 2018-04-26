@@ -27,7 +27,7 @@ specific to smithay resulted in a large accumulation of template parameters on t
 to be named and stored. All these issues made the API quite tedious to use overall.
 
 As a result, for this new version I decided to embrace trait objects, `Rc`, and `Arc`.
-Additionnaly, the API redesign was made focusing on *the spirit* of the wayland protocol,
+Additionaly, the API redesign was made focusing on *the spirit* of the wayland protocol,
 rather than trying to stay close to *the C API*.
 
 To list a few clear gains from this rework:
@@ -44,7 +44,7 @@ To list a few clear gains from this rework:
 ## The new callback specification
 
 The most major API change is on the way callbacks are handled. Previously you had to provide
-a set of freestanding functions that would be given acces to some state data for each event,
+a set of freestanding functions that would be given access to some state data for each event,
 with the difficulties of sharing state between an undeterminate set of callbacks a priori...
 
 Now each time a new protocol object is created, you'll receive it as a `NewProxy`/`NewResource`
@@ -89,7 +89,7 @@ applications. Given the scope of what is possible, it'll clearly remain much sim
 smithay itself, as it only abstracts the wayland protocol, and nothing like all of
 smithay's backends.
 
-Currently, it only provides some barebones functionnalities, but there is still a lot
+Currently, it only provides some barebones functionalities, but there is still a lot
 of room in this toolkit to grow if you want to get involved.
 
 As an example, a minimal client could be created like this:
