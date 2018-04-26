@@ -41,9 +41,9 @@ To list a few clear gains from this rework:
 - Overall better interaction with objects from the C world, if wayland-rs is used in
   combination with C libraries
 
-An other interesting point is that, as this rework is much less centered around the C API,
+Another interesting point is that, as this rework is much less centered around the C API,
 it allowed me to keep open the door for a full-rust implementation of the protocol. Thus I
-conceived the libraries around a cargo feature `native_lib`, controlling whether the native
+designed the libraries around a cargo feature `native_lib`, controlling whether the native
 C library should be used or not. Currently, the libraries are *not* usable without this
 cargo feature enabled (most of the code is `unimplemented!()`), but it should allow for
 implementing this afterwards, without changing public API at all. Meaning that for programs
