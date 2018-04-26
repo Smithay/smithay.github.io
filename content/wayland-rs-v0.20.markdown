@@ -27,7 +27,7 @@ specific to smithay resulted in a large accumulation of template parameters on t
 to be named and stored. All these issues made the API quite tedious to use overall.
 
 As a result, for this new version I decided to embrace trait objects, `Rc`, and `Arc`.
-Additionaly, the API redesign was made focusing on *the spirit* of the wayland protocol,
+Additionally, the API redesign was made focusing on *the spirit* of the wayland protocol,
 rather than trying to stay close to *the C API*.
 
 To list a few clear gains from this rework:
@@ -65,7 +65,7 @@ with the difficulties of sharing state between an undeterminate set of callbacks
 Now each time a new protocol object is created, you'll receive it as a `NewProxy`/`NewResource`
 object (depending on whether you are client side or server side), and will have to implement
 it before accessing the real `Proxy`/`Resource` and being able to use it. Implementing an
-object consists in providing a type implementing the appropriate `Implementation<Meta, Msg>`
+object consists of providing a type implementing the appropriate `Implementation<Meta, Msg>`
 trait.
 
 This trait has a very simple definition:
@@ -83,13 +83,13 @@ messages this object can receive).
 
 The convenience is that `Implementation<Meta, Msg>` is automatically implemented for all
 type that implement `FnMut(Msg, Meta)`. As such, you can easily provide closures as
-implementations, with all the ergonomics of capturing values and code compacity that
+implementations, with all the ergonomics of capturing values and code terseness that
 implies. The only catch being that the implementations must be `'static`, so you'll need
 to rely on `Arc` or `Rc` to share data. The runtime cost implied should be negligible however,
 the wayland protocol part should hardly be a bottleneck for any application.
 
-There are also two ways to implement an object, the default one requiring from the 
-implementation to be `Send`, and a secondary one that relaxes this requirement provided you
+There are also two ways to implement an object, the default one requiring the 
+implementation type to be `Send`, and a secondary one that relaxes this requirement provided you
 provide a token that proves you are doing it from the same thread as the one on which the
 implementation will be invoked.
 
@@ -124,8 +124,8 @@ fn main() {
     // Connect to a wayland server
     let (display, mut event_queue) = Display::connect_to_env().unwrap();
 
-    // The Environment is an abstraction binding for you most of the
-    // classic globals. Otherwise this job is very boring and repetitive.
+    // The Environment an abstraction that binds most of the classic globals
+    // for you. Doing this manually is very boring and repetitive.
     let env =
         Environment::from_registry(display.get_registry().unwrap(), &mut event_queue).unwrap();
 
@@ -139,7 +139,7 @@ fn main() {
         });
     
     // Now create a Window for this surface
-    // The window abstracts for all the protocol handling of the shell, and provides
+    // The window abstracts all the protocol handling of the shell, and provides
     // a simplistic decoration for our window (as many wayland compositors require the
     // clients to draw their decorations themselves).
     // The type parameter (here `BasicFrame`) defines what kind of decorations are drawn,
