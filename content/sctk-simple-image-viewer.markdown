@@ -310,19 +310,19 @@ It's time to jump to the next step:
 
 ### Drawing the contents
 
-In here we'll intialize the few more resources we need to do our drawing, and define
+In here we'll intialize a few more resources we need to do our drawing, and define
 a function that redraws our window for a given size, resizing the loaded image if
 necessary.
 
-Defining the contents of a surfaces is done in Wayland by first drawing the contents
-ourselves, creating a `wl_buffer` referencing this content, and then attaching the
-buffer to the surface. The two mains ways of sharing buffers is via OpenGL or using
-a shared memory in case of CPU drawing. We'll do the later.
+Defining the contents of a surfaces is done in Wayland by first drawing the content,
+creating a `wl_buffer` referencing this content, and then attaching the buffer to the
+surface. The two main ways of sharing buffers is via OpenGL or using a shared memory
+in case of CPU drawing. We'll stick to manually writing the pixels for this app.
 
-A shared memory pool in Wayland context is just a file (more precisely a tempfile, that
-exists only in memory, not on disk) in which the client writes some content and shares the
-file descriptor with the server. Then, when creating a buffer, the client specifies that
-the buffer refers to a certain set of pixels the file, and the server will just read these
+A shared memory pool in Wayland context is just a file (more precisely a tempfile that
+exists only in memory, not on disk) into which the client writes some content. The client
+then shares the file descriptor with the server, and when creating a buffer, specifies that
+the buffer refers to a certain set of pixels in the file. The server will then just read these
 pixels in the shared file to know the contents of the surface this buffer was attached to.
 
 Now, there is an obvious possibility of race if the client writes the file at the same
