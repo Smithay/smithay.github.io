@@ -5,7 +5,7 @@ Slug: sctk-image-viewer
 Authors: Victor Berger
 Summary: Small tutorial of using Smithay's Client Toolkit by example, building a small image viewer as a Wayland client.
 
-Following [the previous announce of Smithay's Client Toolkit](/Wayland-rs-v-0-20.html), this
+Following [the previous announce of Smithay's Client Toolkit](/wayland-rs-v-0-20.html), this
 post aims at giving a general feeling of how this toolkit can be used, and in general how
 Wayland client apps are written. To do so, I'll first recap some general information about
 how Wayland works, and then do a step by step construction of a simple Wayland image viewer
@@ -163,16 +163,16 @@ fn main() {
 Once `Environment::from_registry(..)` returns, we get an already-initialized `Environment`
 with various Wayland globals already bound, available as public fields. First of all,
 we will use the `wl_compositor` global to create a `wl_surface`. The surfaces are the most
-fundamental building block of a Wayland app. It describe some rectangle of pixels to which
+fundamental building block of a Wayland app. It describes a rectangle of pixels to which
 you can attach a `wl_buffer` defining its contents. A Wayland app is built on surfaces:
 
 - Most often, they can be assigned a role. The most classic one would be "toplevel surface",
   meaning this surface is actually a window in the traditional sense. But surfaces can also
   be used to change the image of the mouse pointer for example.
 - They can be defined relative to a parent surface (they are then a "subsurface"), this can
-  typically be usefull if different parts of your UI are drawn by different means. For example
-  a video player could use GPU-accelerated graphism to decode and display the contents of the
-  video, and drawn the rest of its UI with CPU. Subsurfaces are also what SCTK uses
+  typically be useful if different parts of your UI are drawn by different means. For example,
+  a video player could use GPU-accelerated routines to decode and display the contents of the
+  video, and draw the rest of its UI using the CPU. Subsurfaces are also what SCTK uses
   to draw the decorations of your windows, as we'll see later.
 - Input information is given relative to surfaces. A Wayland app does not know the absolute location
   of the pointer for example, but if the pointer is on top of one of its surfaces, it knows its
@@ -249,7 +249,7 @@ fn main() {
         &env.shm,          //  | to initialize the window
         &env.shell,        // -+
         move |evt, ()| {
-            // This is the closure that process the Window events.
+            // This is the closure that processes the Window events.
             // There are 3 possible events:
             // - Close: the user requested the window to be closed, we'll then quit
             // - Configure: the server suggested a new state for the window (possibly
@@ -258,9 +258,9 @@ fn main() {
             // - Refresh: the frame itself needs to be redrawn. SCTK does not do this
             //   automatically because it has a cost and should only be done in parts
             //   of the event loop where the client actually wants to draw
-            // Here we actually only keep the last event receive according to a priority
+            // Here we actually only keep the last event received according to a priority
             // order of Close > Configure > Refresh.
-            // Indeed, if we received a Close, there is not point drawing anything more as
+            // Indeed, if we received a Close, there is not point drawing anything anymore as
             // we will exit. A new Configure overrides a previous one, and if we received
             // a Configure we will refresh the frame anyway.
             let mut next_action = waction.lock().unwrap();
@@ -288,7 +288,7 @@ fn main() {
 
     // The window needs access to pointer inputs to handle the user interaction
     // with it: resizing/moving the window, or clicking its button.
-    // user interaction in Wayland is done via the wl_seat object, which represent
+    // user interaction in Wayland is done via the wl_seat object, which represents
     // a set of pointer/keyboard/touchscreen (some may be absent) that logically
     // represent a single user. Most systems have only one seat, multi-seat configurations
     // are quite exotic.
