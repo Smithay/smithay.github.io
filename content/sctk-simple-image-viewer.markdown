@@ -316,7 +316,7 @@ necessary.
 
 Defining the contents of a surfaces is done in Wayland by first drawing the content,
 creating a `wl_buffer` referencing this content, and then attaching the buffer to the
-surface. The two main ways of sharing buffers is via OpenGL or using a shared memory
+surface. The two main ways of sharing buffers is via OpenGL or shared memory
 in case of CPU drawing. We'll stick to manually writing the pixels for this app.
 
 A shared memory pool in Wayland context is just a file (more precisely a tempfile that
@@ -328,9 +328,9 @@ pixels in the shared file to know the contents of the surface this buffer was at
 Now, there is an obvious possibility of race if the client writes the file at the same
 time as the server reads it. To handle this, the server actually sends an event on the
 buffer to notify that it has finished reading the contents associated with the buffer.
-And the client is expected to manage the double-buffering accordingly.
+The client is expected to manage the double-buffering accordingly.
 
-For this purpose, SCTK provides two tools. The first is `MemPool`, it is an abstraction
+For this purpose, SCTK provides two tools. The first is `MemPool`, which is an abstraction
 over a shared memory pool, managing the transmission of the shared file to the server.
 The second one is `DoubleMemPool`. As you may guess, this holds two `MemPool`. It gives
 you access to one of them, and a way to swap them. A small convenience for doing
@@ -353,7 +353,7 @@ fn main() {
 }
 ```
 
-We will now write an utility function that will do the drawing itself. Taking a mutable
+We will now write a utility function that will do the drawing itself. Taking a mutable
 borrow of a `MemPool`, a reference of our image, and the target dimensions, it will resize
 the image to these dimensions, write it to the memory pool, and return a new buffer to
 the newly drawn contents. We'll actually manage the double buffering in the event loop.
@@ -419,7 +419,7 @@ fn draw(
             // formats that are guaranteed to be supported), but image provides it in
             // RGBA8888, so we need to do the conversion.
             //
-            // Aditionnaly, if the image has some transparent parts, we'll blend them into
+            // Additionnaly, if the image has some transparent parts, we'll blend them into
             // a white background, otherwise the server will draw our window with a
             // transparent background!
             for pixel in image.pixels() {
@@ -462,7 +462,7 @@ fn draw(
 }
 ```
 
-We now have all the bricks in place to start running our app, time to write the event loop.
+We now have all the parts in place to start running our app, time to write the event loop.
 
 ### The event loop
 
@@ -519,7 +519,7 @@ fn main() {
             // We received a Close event, just break from the loop
             // and let the app quit
             Some(WEvent::Close) => break,
-            // We receive a Refresh event, store that we need to refresh the
+            // We received a Refresh event, store that we need to refresh the
             // frame
             Some(WEvent::Refresh) => {
                 need_refresh = true;
@@ -537,7 +537,7 @@ fn main() {
                     }
                 }
                 // Are we currently resizing ?
-                // We check if a resizing just started or stopped,
+                // We check if a resize operation just started or stopped,
                 // because in this case we'll swap between drawing black
                 // and drawing the window (or the reverse), and thus we need to
                 // redraw
@@ -601,7 +601,7 @@ fn main() {
                 free_pools.set(free_pools.get()-1);
                 // Attach this new buffer to our surface.
                 window.surface().attach(Some(&buffer), 0, 0);
-                // We need to tell the server which part of the surface have changed,
+                // We need to tell the server which parts of the surface have changed,
                 // it uses it to only reload/redraw relevant parts for performance.
                 // In our case everything has likely changed so we damage everything.
                 //
@@ -609,7 +609,7 @@ fn main() {
                 if window.surface().version() >= 4 {
                     // If our server is recent enough and supports at least version 4 of the
                     // wl_surface interface, we can specify the damage in buffer coordinates.
-                    // This is obviously the best and do that if possible.
+                    // This is obviously the best, so we do that if possible.
                     window.surface().damage_buffer(0, 0, dimensions.0 as i32, dimensions.1 as i32);
                 } else {
                     // Otherwise, we fallback to compatilibity mode. Here we specify damage
@@ -617,7 +617,7 @@ fn main() {
                     // our buffer at HiDPI resolution. We didn't though, so it is ok.
                     window.surface().damage(0, 0, dimensions.0 as i32, dimensions.1 as i32);
                 }
-                // We resize our frame, so that is is drawn at the right size by SCTK
+                // We resize our frame, so that it is drawn at the right size by SCTK
                 window.resize(dimensions.0, dimensions.1);
                 // We also refresh it, so that SCTK actually draws it with the new size
                 window.refresh();
