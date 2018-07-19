@@ -16,10 +16,11 @@ I can finally say it: wayland-rs is now a pure rust implementation of the protoc
 crate of bindings to the [wayland system C libraries](https://gitlab.freedesktop.org/wayland/wayland).
 
 Or is it? The people who have already discussed this matter know that abandoning the the C wayland
-libraries is really cutting oneself from many interactions, most notably OpenGL. This is obviously not
-something I'm ready (nor willing) to impose on the users of wayland-rs, among which are
-[winit](https://github.com/tomaka/winit) and [glutin](https://github.com/tomaka/glutin), which quite 
-obviously need access to OpenGL...
+libraries is really cutting oneself from many interactions. It is most notably required by OpenGL, but also
+any other C library that you'd want to use and that interacts directly with wayland like GStreamer for
+example. This is obviously not something I'm ready (nor willing) to impose on the users of wayland-rs,
+among which are [winit](https://github.com/tomaka/winit) and [glutin](https://github.com/tomaka/glutin),
+which quite  obviously need access to OpenGL...
 
 This is why starting from the upcoming 0.21 release, wayland-client and wayland-server will simply let
 you choose what you want: the rust implementation or the C one.
