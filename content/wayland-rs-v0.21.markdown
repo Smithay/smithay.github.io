@@ -15,7 +15,7 @@ time to write and merge [quite an epic pull request](https://github.com/Smithay/
 I can finally say it: wayland-rs is now a pure rust implementation of the protocol, rather than a
 crate of bindings to the [wayland system C libraries](https://gitlab.freedesktop.org/wayland/wayland).
 
-Or is it? The people who have already discussed this matter know that abandoning the the C wayland
+Or is it? The people who have already discussed this matter know that abandoning the C wayland
 libraries is really cutting oneself from many interactions. It is most notably required by OpenGL, but also
 any other C library that you'd want to use and that interacts directly with wayland like GStreamer for
 example. This is obviously not something I'm ready (nor willing) to impose on the users of wayland-rs,
