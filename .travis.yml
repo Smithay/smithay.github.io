@@ -5,10 +5,17 @@ branches:
     - content
 
 install:
-  - pip install pelican ghp-import markdown
+  - pip install pelican markdown
 
 script:
-  - make publish github
+  - make publish
+
+deploy:
+  provider: pages
+  skip-cleanup: true
+  github-token: $GITHUB_TOKEN
+  target-branch: master
+  local-dir: output
 
 notifications:
     webhooks:
