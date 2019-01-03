@@ -23,6 +23,12 @@ Smithay now comes with `anvil`, a reference implementation of a compositor built
 helps a lot with developping and testing new features and reproducing bugs. Anvil can be started
 as a Wayland or X11 client (using winit), or directly in a tty.
 
+<center>
+<img src="/images/smithay-v02.jpg" alt="Picture of anvil running on my laptop" width="60%"/>
+
+Anvil running on my laptop, with [alacritty](https://github.com/jwilm/alacritty) started
+</center>
+
 #### The DRM rewrite
 
 The whole graphics backend has been deeply refactored by [@Drakulix](https://github.com/drakulix),
