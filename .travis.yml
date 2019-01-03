@@ -16,6 +16,8 @@ deploy:
   github-token: $GITHUB_TOKEN
   target-branch: master
   local-dir: output
+  on:
+    branch: content
 
 notifications:
     webhooks:
