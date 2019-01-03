@@ -9,18 +9,18 @@ I am happy to announce the 0.2 release of [smithay](https://crates.io/crates/smi
 for writing wayland compositors. With this release, it now contains all the fundamentals for building a
 working compositor.
 
-A lot of things have changed since the 0.1 one year ago. A large part of the crate has been completely
+A lot of things have changed since the 0.1 release one year ago. A large part of the crate has been completely
 rewritten, and work in smithay has also driven evolutions in its dependencies (a large part of which are
 also hosted in the smithay project).
 
 ## What has changed
 
-Here a quick summary of the changes that occured since 0.1.
+Here's a quick summary of the changes that occured since 0.1.
 
 #### Anvil
 
 Smithay now comes with `anvil`, a reference implementation of a compositor built on smithay. It
-helps a lot with developping and testing new features and reproducing bugs. Anvil can be started
+helps a lot with developing and testing new features and reproducing bugs. Anvil can be started
 as a Wayland or X11 client (using winit), or directly in a tty.
 
 <center>
@@ -33,7 +33,7 @@ Anvil running on my laptop, with [alacritty](https://github.com/jwilm/alacritty)
 
 The whole graphics backend has been deeply refactored by [@Drakulix](https://github.com/drakulix),
 especially the DRM-handling code and the GBM and EGL abstractions on top of it, which are now clearly
-seperated from one another. This improved the structure and clarity of the API, and paved the groundwork
+separated from one another. This improved the structure and clarity of the API, and paved the groundwork
 for future integration of new features, like atomic modesetting, EGLStreams, and vulkan support.
 
 #### Full core-protocol support
@@ -47,7 +47,7 @@ wayland-native apps, such as most programs built on Qt5, Gtk+3 or
 Smithay has been ported to [wayland-server](https://crates.io/crates/wayland-server) version 0.21 and
 [calloop](https://crates.io/crates/calloop), which opens the way for use of the pure-rust implementation
 of the wayland protocol. Smithay can already run with it, but support for OpenGL clients on the rust
-implementation is still blocked, waiting some evolutions of the dma-buf protocol extensions.
+implementation is still blocked, waiting on some evolutions of the dma-buf protocol extensions.
 
 #### Basic XWayland support
 
@@ -58,7 +58,7 @@ compositor, which Smithay does not have yet.
 ## The path forward
 
 There is of course still a lot of work to do, but the path forward can now be split into several
-more or less independant tasks, now that the core is mostly established. You can have a detailed view
+more or less independent tasks, now that the core is mostly established. You can have a detailed view
 of them in the [issue tracker](https://github.com/smithay/smithay/issues), but here is a quick overview
 of the biggest ones:
 
@@ -75,4 +75,4 @@ If you are interested in the project, feel free to drop by in our matrix chatroo
 at *#smithay* and to gitter at [smithay/Lobby](https://gitter.im/smithay/Lobby).
 
 A large part of the work needed on smithay does not require extensive knowledge on the wayland protocol
-or the linux internals, and we are happy to mentor anyone interested to get familiar with the project!
+or the linux internals, and we are happy to mentor anyone interested in getting familiar with the project!
