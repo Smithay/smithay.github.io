@@ -16,7 +16,7 @@ Wayland utilities:
   to factor-out the redundants parts of writing a client, allowing to focus on the
   particularities of each specific app. 
 - [smithay-clipboard](https://github.com/Smithay/smithay-clipboard) is a utility crate
-  to provide access to the wayland clipboard.
+  to provide access to the wayland clipboard for client applications.
 
 Smithay dependencies:
 
