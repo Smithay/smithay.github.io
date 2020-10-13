@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <!-- Required meta tags -->
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+
+  <title>  Version 0.1 of Smithay | Smithay project
+</title>
+  <link rel="canonical" href="https://smithay.github.io/smithay-v-0-1.html">
+
+
+  <link rel="stylesheet" href="https://smithay.github.io/theme/css/bootstrap.min.css">
+  <link rel="stylesheet" href="https://smithay.github.io/theme/css/font-awesome.min.css">
+  <link rel="stylesheet" href="https://smithay.github.io/theme/css/pygments/default.min.css">
+  <link rel="stylesheet" href="https://smithay.github.io/theme/css/theme.css">
+
+  <link rel="alternate" type="application/atom+xml" title="Full Atom Feed"
+        href="https://smithay.github.io/feeds/all.atom.xml">
+  <link rel="alternate" type="application/atom+xml" title="Categories Atom Feed"
+        href="https://smithay.github.io/feeds/{slug}.atom.xml">  
+  <meta name="description" content="Announcement of version 0.1 of smithay, and a general presentation of the project and its goals.">
+
+
+</head>
+
+<body>
+  <header class="header">
+    <div class="container">
+<div class="row">
+    <div class="col-sm-4">
+      <a href="https://smithay.github.io/">
+        <img class="img-fluid rounded" src=https://smithay.github.io/images/smithay_logo.svg alt="Smithay project">
+      </a>
+    </div>
+  <div class="col-sm-8">
+    <h1 class="title"><a href="https://smithay.github.io/">Smithay project</a></h1>
+      <p class="text-muted">The rusty smithy for wayland compositors</p>
+      <ul class="list-inline">
+            <li class="list-inline-item"><a href="https://smithay.github.io/pages/about.html">About</a></li>
+            <li class="list-inline-item"><a href="https://smithay.github.io/pages/contact.html">Contact</a></li>
+            <li class="list-inline-item"><a href="https://smithay.github.io/pages/documentation.html">Documentation</a></li>
+            <li class=" list-inline-item text-muted">|</li>
+          <li class="list-inline-item"><a class="fa fa-github" href="https://github.com/Smithay" target="_blank"></a></li>
+      </ul>
+  </div>
+</div>    </div>
+  </header>
+
+  <div class="main">
+    <div class="container">
+      <h1>  Version 0.1 of Smithay
+</h1>
+      <hr>
+  <article class="article">
+    <header>
+      <ul class="list-inline">
+        <li class="list-inline-item text-muted" title="2017-10-05T17:00:00+02:00">
+          <i class="fa fa-clock-o"></i>
+          Thu 05 October 2017
+        </li>
+        <li class="list-inline-item">
+          <i class="fa fa-folder-open-o"></i>
+          <a href="https://smithay.github.io/category/releases.html">Releases</a>
+        </li>
+          <li class="list-inline-item">
+            <i class="fa fa-user-o"></i>
+              <a href="https://smithay.github.io/author/victor-berger.html">Victor Berger</a>          </li>
+      </ul>
+    </header>
+    <div class="content">
+      <p>A few days ago we released version 0.1 of the <a href="https://crates.io/crates/smithay">smithay crate</a>,
+its first release on crates.io. On this occasion, let me make a slightly detailed presentation of this
+wayland compositor library.</p>
+<p>First of all, let me give some context of wayland, in order to show what problem smithay tries to solve.
+If you already know about this protocol, feel free to jump to next section.</p>
+<h2>Wayland background</h2>
+<p>The <a href="https://wayland.freedesktop.org/">wayland protocol</a> aims at replacing the X11 protocol as the standard
+communication mean between graphical client apps and the display server on linux. The rationale for this is
+that given how X11 is old, has accumulated a lot of debt over the years, and is full of security holes, it's
+better to just start over with a new protocol. The project has been going for a few years now and adoption
+is getting pretty good. Notably Gtk/Gnome and Qt/KDE are now almost fully compatible, and some linux
+distributions have started enabling it by default.</p>
+<p>In a few points, here are the main difference between Wayland and X11:</p>
+<ul>
+<li>Wayland is much smaller and barebones. We could push the analogy to the point of saying that Wayland
+  is to X11 what Vulkan is to OpenGL. For example, a Wayland client is expected to fully handle the
+  drawing of its content, and just hand a buffer to the server via shared memory, while the X11 protocol
+  embeds many drawing primitives (though many recent X11 apps already do it that way anyway).</li>
+<li>Wayland puts a lot of focus on security and client isolation. A wayland client does now know if other
+  clients are running, let alone accessing their data while any X11 client can hijack the inputs of any
+  other, or read the contents of any window. This is typically the kind of things keyloggers do.</li>
+<li>Wayland does not have a single implementation. KDE and Gnome both ship their own wayland server, and there
+  is the reference server Weston, as well a some others. X11 had its de-facto unique implementation Xorg,
+  and window managers connected to the server as privilegied clients. Wayland window managers <em>are</em> the
+  servers.</li>
+</ul>
+<p>This last point is core to Smithay's use: writing a full wayland server is a lot of work. There is the
+need to handle all the clients protocol-wise, do all the job of a window manager, but also manage the
+low-level resources with the kernel, initialize the framebuffers, retrieve and process the raw inputs,
+do the actual drawing and compositing, draw and manage the whole desktop user interface and so forth…</p>
+<p>As such, while big projects like Gnome or KDE can afford doing all this in a very personal and customized
+way, smaller wayland compositors have started to rely on compositor libraries that do part of this job
+for you. Examples are <a href="https://github.com/wayland-project/weston">libweston</a>,
+<a href="https://github.com/swaywm/wlroots">wlroots</a>, or the now mostly abandonned <a href="https://github.com/Cloudef/wlc">WLC</a>.</p>
+<p>Smithay is a compositor library written in Rust.</p>
+<h2>What's in this 0.1?</h2>
+<p>This first releases brings the most basic building blocks necessary to build a compositor. Smithay
+is designed in a modular bottom-up fashion: we currently have several independant low-level modules,
+each managing a very specific part of what "being a wayland compositor" requires. Smithay's user can
+then use these modules and configure them as they please to set up their compositor.</p>
+<p>We will consider integrating higher-level modules into Smithay in the future. They would be built on
+top of the low-level ones, but there is still much work to do with the low-level ones, and this
+takes priority!</p>
+<p>Smithay modules are currently organized in two groups: backend modules and wayland modules.</p>
+<h4>Backend modules</h4>
+<p>The backend modules are here to ease integration with the operating system. They abstract away the
+setup of the framebuffers, initialization of an OpenGL context to draw on, and retrieval of user
+inputs. Currently two backends exist:</p>
+<ul>
+<li>The DRM + libinput backend, which allows to start a smithay-based compositor directly in a TTY,
+  like a regular graphical environment.</li>
+<li>the winit backend, which allows to start a smithay-based compositor as a winit app (and as such
+  as an X11 or wayland client). Being able to launch the compositor as a client helps a lot with
+  the development and debugging.</li>
+</ul>
+<h4>Frontend modules</h4>
+<p>The wayland modules take care of several aspects of the wayland protocol and manage the
+state of the wayland clients. Currently 3 main tasks are implemented:</p>
+<ul>
+<li>Keeping track of shared memory buffers sent by the clients in the form of a shared memory map
+  (note: this does not handle opengl clients).</li>
+<li>Keeping track of the client surfaces and their relations to each other. Wayland clients define their
+  window contents by creating one or more surfaces, positioning them relative to each other, and
+  attaching buffers to them.</li>
+<li>Forwarding inputs to the clients selectively based on current pointer or keyboard focus.</li>
+</ul>
+<p>All this together already allows the handling of several type of clients. For example, it is possible to
+run <code>weston-terminal</code> (a wayland terminal emulator provided by weston) in the smithay examples:</p>
+<p><img alt="Smithay running weston-terminal" src="/images/smithay-0-1.png"></p>
+<p><em>The black borders are a graphical artefact from smithay's example, that we just haven't got around
+fixing yet.</em></p>
+<h2>How can I run it?</h2>
+<p>If you want to play around with smithay and see what it can do, check out the
+<a href="https://github.com/Smithay/smithay/tree/master/examples">examples in the github repository</a>. A lot
+of code is still needed for a compositor built on smithay to work, and there is not nearly enough
+space in this blog post to paste the code.</p>
+<p>You can also check out <a href="https://docs.rs/smithay">Smithay's documentation on docs.rs</a>. The crate-level
+docs are minimalistic, but we try to expand on all the details in the documentation of the individual
+modules.</p>
+<h2>What's next?</h2>
+<p>For the next steps, we plan to keep working on the fundamentals. Some of the most important remaining features are:</p>
+<ul>
+<li>Finish implementing the core wayland protocol (still missing: touch events, copy/paste, and a few other things)</li>
+<li>Integrate more with the OS (udev, consolekit/logind) to allow starting proper graphical sessions</li>
+<li>Implement support for OpenGL clients</li>
+<li>Implement support fo Xwayland, the compatibility layer to run X11 apps in a wayland environment</li>
+</ul>
+<p>If you are interested, your contributions would be very welcome! Most of the work on the backends don't
+require any wayland knowledge. We've also started to work on a <a href="https://smithay.github.io/book/">smithay book</a>.
+For now it only contains explanations of the wayland protocol itself, but we plan to incorporate detailed tutorials
+on how to create wayland client apps using the <code>wayland-client</code> crate, and how to create wayland compositors using
+<code>wayland-server</code> and <code>smithay</code>.</p>
+<p>We have a matrix chatroom <a href="https://matrix.to/#/#smithay:matrix.org">@smithay:matrix.org</a>, which
+is also bridged to mozilla's IRC at <em>#smithay</em> and to gitter at <a href="https://gitter.im/smithay/Lobby">smithay/Lobby</a>.
+Feel free to drop by!</p>
+    </div>
+  </article>
+    </div>
+  </div>
+
+  <footer class="footer">
+    <div class="container">
+<div class="row">
+  <ul class="col-sm-6 list-inline">
+      <li class="list-inline-item"><a href="https://smithay.github.io/authors.html">Authors</a></li>
+    <li class="list-inline-item"><a href="https://smithay.github.io/archives.html">Archives</a></li>
+    <li class="list-inline-item"><a href="https://smithay.github.io/categories.html">Categories</a></li>
+  </ul>
+  <p class="col-sm-6 text-sm-right text-muted">
+    Generated by <a href="https://github.com/getpelican/pelican" target="_blank">Pelican</a>
+    / <a href="https://github.com/nairobilug/pelican-alchemy" target="_blank">&#x2728;</a>
+  </p>
+</div>    </div>
+  </footer>
+</body>
+
+</html>

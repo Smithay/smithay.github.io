@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <!-- Required meta tags -->
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+
+  <title>  Version 0.2 of Smithay | Smithay project
+</title>
+  <link rel="canonical" href="https://smithay.github.io/smithay-v-0-2.html">
+
+
+  <link rel="stylesheet" href="https://smithay.github.io/theme/css/bootstrap.min.css">
+  <link rel="stylesheet" href="https://smithay.github.io/theme/css/font-awesome.min.css">
+  <link rel="stylesheet" href="https://smithay.github.io/theme/css/pygments/default.min.css">
+  <link rel="stylesheet" href="https://smithay.github.io/theme/css/theme.css">
+
+  <link rel="alternate" type="application/atom+xml" title="Full Atom Feed"
+        href="https://smithay.github.io/feeds/all.atom.xml">
+  <link rel="alternate" type="application/atom+xml" title="Categories Atom Feed"
+        href="https://smithay.github.io/feeds/{slug}.atom.xml">  
+  <meta name="description" content="Announcement of version 0.2 of smithay, now providing the fundamentals of a wayland compositor.">
+
+
+</head>
+
+<body>
+  <header class="header">
+    <div class="container">
+<div class="row">
+    <div class="col-sm-4">
+      <a href="https://smithay.github.io/">
+        <img class="img-fluid rounded" src=https://smithay.github.io/images/smithay_logo.svg alt="Smithay project">
+      </a>
+    </div>
+  <div class="col-sm-8">
+    <h1 class="title"><a href="https://smithay.github.io/">Smithay project</a></h1>
+      <p class="text-muted">The rusty smithy for wayland compositors</p>
+      <ul class="list-inline">
+            <li class="list-inline-item"><a href="https://smithay.github.io/pages/about.html">About</a></li>
+            <li class="list-inline-item"><a href="https://smithay.github.io/pages/contact.html">Contact</a></li>
+            <li class="list-inline-item"><a href="https://smithay.github.io/pages/documentation.html">Documentation</a></li>
+            <li class=" list-inline-item text-muted">|</li>
+          <li class="list-inline-item"><a class="fa fa-github" href="https://github.com/Smithay" target="_blank"></a></li>
+      </ul>
+  </div>
+</div>    </div>
+  </header>
+
+  <div class="main">
+    <div class="container">
+      <h1>  Version 0.2 of Smithay
+</h1>
+      <hr>
+  <article class="article">
+    <header>
+      <ul class="list-inline">
+        <li class="list-inline-item text-muted" title="2018-12-28T17:00:00+01:00">
+          <i class="fa fa-clock-o"></i>
+          Fri 28 December 2018
+        </li>
+        <li class="list-inline-item">
+          <i class="fa fa-folder-open-o"></i>
+          <a href="https://smithay.github.io/category/releases.html">Releases</a>
+        </li>
+          <li class="list-inline-item">
+            <i class="fa fa-user-o"></i>
+              <a href="https://smithay.github.io/author/victor-berger.html">Victor Berger</a>          </li>
+      </ul>
+    </header>
+    <div class="content">
+      <p>I am happy to announce the 0.2 release of <a href="https://crates.io/crates/smithay">smithay</a>. Smithay is a library
+for writing wayland compositors. With this release, it now contains all the fundamentals for building a
+working compositor.</p>
+<p>A lot of things have changed since the 0.1 release one year ago. A large part of the crate has been completely
+rewritten, and work in smithay has also driven evolutions in its dependencies (a large part of which are
+also hosted in the smithay project).</p>
+<h2>What has changed</h2>
+<p>Here's a quick summary of the changes that occured since 0.1.</p>
+<h4>Anvil</h4>
+<p>Smithay now comes with <code>anvil</code>, a reference implementation of a compositor built on smithay. It
+helps a lot with developing and testing new features and reproducing bugs. Anvil can be started
+as a Wayland or X11 client (using winit), or directly in a tty.</p>
+<p><center>
+<img src="/images/smithay-v02.jpg" alt="Picture of anvil running on my laptop" width="60%"/></p>
+<p>Anvil running on my laptop, with <a href="https://github.com/jwilm/alacritty">alacritty</a> started
+</center></p>
+<h4>The DRM rewrite</h4>
+<p>The whole graphics backend has been deeply refactored by <a href="https://github.com/drakulix">@Drakulix</a>,
+especially the DRM-handling code and the GBM and EGL abstractions on top of it, which are now clearly
+separated from one another. This improved the structure and clarity of the API, and paved the groundwork
+for future integration of new features, like atomic modesetting, EGLStreams, and vulkan support.</p>
+<h4>Full core-protocol support</h4>
+<p>Smithay now supports the entirety of the core wayland protocol, making it capable of running most
+wayland-native apps, such as most programs built on Qt5, Gtk+3 or
+<a href="https://crates.io/crates/winit">winit</a> (including <a href="https://github.com/jwilm/alacritty">alacritty</a>).</p>
+<h4>Port to wayland-server 0.21</h4>
+<p>Smithay has been ported to <a href="https://crates.io/crates/wayland-server">wayland-server</a> version 0.21 and
+<a href="https://crates.io/crates/calloop">calloop</a>, which opens the way for use of the pure-rust implementation
+of the wayland protocol. Smithay can already run with it, but support for OpenGL clients on the rust
+implementation is still blocked, waiting on some evolutions of the dma-buf protocol extensions.</p>
+<h4>Basic XWayland support</h4>
+<p>Smithay is now capable of starting and monitoring the XWayland server, for running X apps under wayland.
+However the XWayland server actually also requires to have an X window manager implemented in the wayland
+compositor, which Smithay does not have yet.</p>
+<h2>The path forward</h2>
+<p>There is of course still a lot of work to do, but the path forward can now be split into several
+more or less independent tasks, now that the core is mostly established. You can have a detailed view
+of them in the <a href="https://github.com/smithay/smithay/issues">issue tracker</a>, but here is a quick overview
+of the biggest ones:</p>
+<ul>
+<li>Support for input events from touchscreens (<a href="https://github.com/Smithay/smithay/issues/48">#48</a>)</li>
+<li>Implementation of an X Window Manager for XWayland support
+  (<a href="https://github.com/Smithay/smithay/issues/25">#25</a>)</li>
+<li>Support for the DMABUF protocol extension (<a href="https://github.com/Smithay/smithay/issues/96">#96</a>)</li>
+<li>Implement classic shell interactions in anvil (<a href="https://github.com/Smithay/smithay/issues/94">#94</a>)</li>
+<li>Write some stand-alone focused examples for smithay (<a href="https://github.com/Smithay/smithay/issues/99">#99</a>)</li>
+<li>Design and introduce higher-level abstractions over the low-level support currently implemented</li>
+</ul>
+<p>If you are interested in the project, feel free to drop by in our matrix chatroom
+<a href="https://matrix.to/#/#smithay:matrix.org">#smithay:matrix.org</a>, which is also bridged to mozilla's IRC
+at <em>#smithay</em> and to gitter at <a href="https://gitter.im/smithay/Lobby">smithay/Lobby</a>.</p>
+<p>A large part of the work needed on smithay does not require extensive knowledge on the wayland protocol
+or the linux internals, and we are happy to mentor anyone interested in getting familiar with the project!</p>
+    </div>
+  </article>
+    </div>
+  </div>
+
+  <footer class="footer">
+    <div class="container">
+<div class="row">
+  <ul class="col-sm-6 list-inline">
+      <li class="list-inline-item"><a href="https://smithay.github.io/authors.html">Authors</a></li>
+    <li class="list-inline-item"><a href="https://smithay.github.io/archives.html">Archives</a></li>
+    <li class="list-inline-item"><a href="https://smithay.github.io/categories.html">Categories</a></li>
+  </ul>
+  <p class="col-sm-6 text-sm-right text-muted">
+    Generated by <a href="https://github.com/getpelican/pelican" target="_blank">Pelican</a>
+    / <a href="https://github.com/nairobilug/pelican-alchemy" target="_blank">&#x2728;</a>
+  </p>
+</div>    </div>
+  </footer>
+</body>
+
+</html>

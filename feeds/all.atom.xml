@@ -1,0 +1,1107 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom"><title>Smithay project</title><link href="https://smithay.github.io/" rel="alternate"></link><link href="https://smithay.github.io/feeds/all.atom.xml" rel="self"></link><id>https://smithay.github.io/</id><updated>2020-10-13T19:00:00+02:00</updated><subtitle>The rusty smithy for wayland compositors</subtitle><entry><title>Version 0.7 of calloop</title><link href="https://smithay.github.io/calloop-v-0-7.html" rel="alternate"></link><published>2020-10-13T19:00:00+02:00</published><updated>2020-10-13T19:00:00+02:00</updated><author><name>Victor Berger</name></author><id>tag:smithay.github.io,2020-10-13:/calloop-v-0-7.html</id><summary type="html">&lt;p&gt;Announcement of version 0.7 of calloop, and a presentation of the crate.&lt;/p&gt;</summary><content type="html">&lt;p&gt;We just released &lt;a href="https://github.com/Smithay/calloop/releases/tag/v0.7.0"&gt;version 0.7&lt;/a&gt; of &lt;a href="https://docs.rs/calloop"&gt;calloop&lt;/a&gt;, the callback-based event loop that backs &lt;a href="https://github.com/Smithay/smithay"&gt;Smithay&lt;/a&gt;
+and optionaly &lt;a href="https://github.com/Smithay/client-toolkit"&gt;SCTK&lt;/a&gt;. As the crate is now getting mature, it is time for a formal presentation!&lt;/p&gt;
+&lt;h2&gt;Callbacks, in Rust?&lt;/h2&gt;
+&lt;p&gt;It is commonly acknowledged that in Rust, callback-based designs induce a lot of friction, in
+particular regarding state sharing. Nobody wants to have &lt;code&gt;Rc&amp;lt;RefCell&amp;lt;_&amp;gt;&amp;gt;&lt;/code&gt; littered all around their
+codebase, and so naturally most of the ecosystem turned to async/await, a design much more natural
+given the constraints of the language.&lt;/p&gt;
+&lt;p&gt;However, not all usecases play well with async/await, notably cases were you are in a purely
+reactive context: waiting for events and quickly reacting to them. Indeed, why would you use
+async/await if you never need to &lt;code&gt;.await&lt;/code&gt; anything? This is for a large part our context of
+work in Smithay, and so we developed calloop.&lt;/p&gt;
+&lt;p&gt;Calloop is designed trying to ease the friction of using callbacks in Rust as much as possible.
+The central issue, state sharing, is managed though some global shared data. A mutable reference
+to some value of your choosing is passed down to all callbacks. As the whole event loop is
+single-threaded, this allows them access to your state without any synchronization or
+reference-counted pointers, as if they were all methods of the same object.&lt;/p&gt;
+&lt;p&gt;In a nutshell, calloop is mostly targeted at apps that spend a large portion of their time just
+waiting for something to happen, and need to quickly react to it as opposed to apps that need
+to manage numerous computations or sockets in parallel efficiently, which is the more common
+use of async/await. This processing can be more practical in GUI apps notably, in particular in
+X11 or Wayland contexts, where the communication with the display server is made over an Unix
+socket, which can be monitored by APIs like &lt;code&gt;epoll&lt;/code&gt; or &lt;code&gt;kqueue&lt;/code&gt;.&lt;/p&gt;
+&lt;h2&gt;How is it used?&lt;/h2&gt;
+&lt;p&gt;Calloop's core is the &lt;code&gt;EventLoop&lt;/code&gt; type. As you can tell by its name, it is the event loop. Once
+you've registered your event sources and their callbacks, you just call &lt;code&gt;EventLoop::run(...)&lt;/code&gt; and
+that method will block, running your event loop and dispatching the events appropriately. Setting
+up these callbacks is done though two main components: the &lt;code&gt;LoopHandle&lt;/code&gt; object, and the &lt;code&gt;EventSource&lt;/code&gt;
+trait.&lt;/p&gt;
+&lt;p&gt;The &lt;code&gt;LoopHandle&lt;/code&gt; is a handle to the &lt;code&gt;EventLoop&lt;/code&gt; (duh). This handle can be cloned and shared in
+different parts of your program. This handle is what is used to setup new callbacks, which can thus
+be done from mostly anywhere, even within a callback! The notable constraint to this is that the
+handle is not shareable between threads. Calloop is meant to run the event loop on a single thread.&lt;/p&gt;
+&lt;p&gt;The &lt;code&gt;EventSource&lt;/code&gt; trait is a generic interface for "something that can generate events". Anything
+implementing that trait can be associated to a callback in the &lt;code&gt;EventLoop&lt;/code&gt;. It will be monitored
+and the associated callback will be invoked every time the event source generates an event. This
+trait is meant to be composable: one can implement a high-level event source by wrapping a low-level
+one and further processing its event before passing them along.&lt;/p&gt;
+&lt;p&gt;To give you a feel of what it looks like, take a look at this example extracted from the documentation:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="k"&gt;use&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;calloop&lt;/span&gt;::&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="n"&gt;generic&lt;/span&gt;::&lt;span class="n"&gt;Generic&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;EventLoop&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;Interest&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;Mode&lt;/span&gt;&lt;span class="p"&gt;};&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+
+&lt;span class="k"&gt;use&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;std&lt;/span&gt;::&lt;span class="n"&gt;time&lt;/span&gt;::&lt;span class="n"&gt;Duration&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+
+&lt;span class="k"&gt;fn&lt;/span&gt; &lt;span class="nf"&gt;main&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// Create the event loop&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="kd"&gt;let&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="k"&gt;mut&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;event_loop&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;EventLoop&lt;/span&gt;::&lt;span class="n"&gt;try_new&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;                &lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;expect&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="s"&gt;&amp;quot;Failed to initialize the event loop!&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;);&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// Retrieve a handle. It is used to insert new sources into the event loop&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// It can be cloned, allowing you to insert sources from within callbacks&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="kd"&gt;let&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;handle&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;event_loop&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;handle&lt;/span&gt;&lt;span class="p"&gt;();&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// Inserting an event source takes this general form&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// it can also be done from within the callback of an other event source&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="n"&gt;handle&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;insert_source&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="c1"&gt;// a type implementing the EventSource trait&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="n"&gt;source&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="c1"&gt;// a callback that is invoked whenever this source generates an event&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="o"&gt;|&lt;/span&gt;&lt;span class="n"&gt;event&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;metadata&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;shared_data&lt;/span&gt;&lt;span class="o"&gt;|&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="c1"&gt;// This callback is given 3 values:&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="c1"&gt;// - the event generated by the source&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="c1"&gt;// - &amp;amp;mut access to some metadata, specific to the event source&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="c1"&gt;// - &amp;amp;mut access to the global shared data that was passed to EventLoop::dispatch&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="p"&gt;}&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="p"&gt;);&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// Actual run of your loop&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;//&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// Dispatch received events to their callbacks, waiting at most 20 ms for&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// new events between each batch.&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;//&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// The `&amp;amp;mut shared_data` is a mutable reference that will be forwarded to all&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// your callbacks, allowing them to easily share some state&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="n"&gt;event_loop&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;run&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;Duration&lt;/span&gt;::&lt;span class="n"&gt;from_millis&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="mi"&gt;20&lt;/span&gt;&lt;span class="p"&gt;),&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;&amp;amp;&lt;/span&gt;&lt;span class="k"&gt;mut&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;shared_data&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;|&lt;/span&gt;&lt;span class="n"&gt;shared_data&lt;/span&gt;&lt;span class="o"&gt;|&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="cm"&gt;/*&lt;/span&gt;
+&lt;span class="cm"&gt;        * Insert here the processing you need to do between each waiting batch (if any)&lt;/span&gt;
+&lt;span class="cm"&gt;        * like invoking your drawing logic if you&amp;#39;re writing a GUI app for example.&lt;/span&gt;
+&lt;span class="cm"&gt;        */&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="p"&gt;});&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="p"&gt;}&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+
+&lt;p&gt;Calloop provides a few implementation of the &lt;code&gt;EventSource&lt;/code&gt; trait such as a timer, a channel, and a
+generic adapter for monitoring a file descriptor for read/write readiness. At the moment calloop
+only supports Linux and the *BSD systems, but adding support for other platforms would be a welcome
+contribution!&lt;/p&gt;
+&lt;h2&gt;Can it work alongside async/await?&lt;/h2&gt;
+&lt;p&gt;Even if the core of your app works best will callbacks, some part of your needs might benefit from
+async/await. Since 0.7, calloop allows you to mix both paradigms. This is supported by two separate
+parts newly added to calloop: an async IO adapter, and an executor.&lt;/p&gt;
+&lt;p&gt;The async IO adapter provides an &lt;code&gt;Async&lt;/code&gt; type similar to the one provided by the
+&lt;a href="https://docs.rs/async-io"&gt;&lt;code&gt;async-io&lt;/code&gt;&lt;/a&gt; crate, but instead of spawning a background thread, it monitors
+the readiness of IO objects directy in the associated &lt;code&gt;EventLoop&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;The executor is, unsuprisingly, yet another implementation of the &lt;code&gt;EventSource&lt;/code&gt; trait, which can
+thus be inserted into an &lt;code&gt;EventLoop&lt;/code&gt; just like any other event source. It is paired with a
+cloneable &lt;code&gt;Scheduler&lt;/code&gt;, which can be used to spawn futures into the executor from anywhere.&lt;/p&gt;</content><category term="Releases"></category></entry><entry><title>Version 0.2 of Smithay</title><link href="https://smithay.github.io/smithay-v-0-2.html" rel="alternate"></link><published>2018-12-28T17:00:00+01:00</published><updated>2018-12-28T17:00:00+01:00</updated><author><name>Victor Berger</name></author><id>tag:smithay.github.io,2018-12-28:/smithay-v-0-2.html</id><summary type="html">&lt;p&gt;Announcement of version 0.2 of smithay, now providing the fundamentals of a wayland compositor.&lt;/p&gt;</summary><content type="html">&lt;p&gt;I am happy to announce the 0.2 release of &lt;a href="https://crates.io/crates/smithay"&gt;smithay&lt;/a&gt;. Smithay is a library
+for writing wayland compositors. With this release, it now contains all the fundamentals for building a
+working compositor.&lt;/p&gt;
+&lt;p&gt;A lot of things have changed since the 0.1 release one year ago. A large part of the crate has been completely
+rewritten, and work in smithay has also driven evolutions in its dependencies (a large part of which are
+also hosted in the smithay project).&lt;/p&gt;
+&lt;h2&gt;What has changed&lt;/h2&gt;
+&lt;p&gt;Here's a quick summary of the changes that occured since 0.1.&lt;/p&gt;
+&lt;h4&gt;Anvil&lt;/h4&gt;
+&lt;p&gt;Smithay now comes with &lt;code&gt;anvil&lt;/code&gt;, a reference implementation of a compositor built on smithay. It
+helps a lot with developing and testing new features and reproducing bugs. Anvil can be started
+as a Wayland or X11 client (using winit), or directly in a tty.&lt;/p&gt;
+&lt;p&gt;&lt;center&gt;
+&lt;img src="/images/smithay-v02.jpg" alt="Picture of anvil running on my laptop" width="60%"/&gt;&lt;/p&gt;
+&lt;p&gt;Anvil running on my laptop, with &lt;a href="https://github.com/jwilm/alacritty"&gt;alacritty&lt;/a&gt; started
+&lt;/center&gt;&lt;/p&gt;
+&lt;h4&gt;The DRM rewrite&lt;/h4&gt;
+&lt;p&gt;The whole graphics backend has been deeply refactored by &lt;a href="https://github.com/drakulix"&gt;@Drakulix&lt;/a&gt;,
+especially the DRM-handling code and the GBM and EGL abstractions on top of it, which are now clearly
+separated from one another. This improved the structure and clarity of the API, and paved the groundwork
+for future integration of new features, like atomic modesetting, EGLStreams, and vulkan support.&lt;/p&gt;
+&lt;h4&gt;Full core-protocol support&lt;/h4&gt;
+&lt;p&gt;Smithay now supports the entirety of the core wayland protocol, making it capable of running most
+wayland-native apps, such as most programs built on Qt5, Gtk+3 or
+&lt;a href="https://crates.io/crates/winit"&gt;winit&lt;/a&gt; (including &lt;a href="https://github.com/jwilm/alacritty"&gt;alacritty&lt;/a&gt;).&lt;/p&gt;
+&lt;h4&gt;Port to wayland-server 0.21&lt;/h4&gt;
+&lt;p&gt;Smithay has been ported to &lt;a href="https://crates.io/crates/wayland-server"&gt;wayland-server&lt;/a&gt; version 0.21 and
+&lt;a href="https://crates.io/crates/calloop"&gt;calloop&lt;/a&gt;, which opens the way for use of the pure-rust implementation
+of the wayland protocol. Smithay can already run with it, but support for OpenGL clients on the rust
+implementation is still blocked, waiting on some evolutions of the dma-buf protocol extensions.&lt;/p&gt;
+&lt;h4&gt;Basic XWayland support&lt;/h4&gt;
+&lt;p&gt;Smithay is now capable of starting and monitoring the XWayland server, for running X apps under wayland.
+However the XWayland server actually also requires to have an X window manager implemented in the wayland
+compositor, which Smithay does not have yet.&lt;/p&gt;
+&lt;h2&gt;The path forward&lt;/h2&gt;
+&lt;p&gt;There is of course still a lot of work to do, but the path forward can now be split into several
+more or less independent tasks, now that the core is mostly established. You can have a detailed view
+of them in the &lt;a href="https://github.com/smithay/smithay/issues"&gt;issue tracker&lt;/a&gt;, but here is a quick overview
+of the biggest ones:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Support for input events from touchscreens (&lt;a href="https://github.com/Smithay/smithay/issues/48"&gt;#48&lt;/a&gt;)&lt;/li&gt;
+&lt;li&gt;Implementation of an X Window Manager for XWayland support
+  (&lt;a href="https://github.com/Smithay/smithay/issues/25"&gt;#25&lt;/a&gt;)&lt;/li&gt;
+&lt;li&gt;Support for the DMABUF protocol extension (&lt;a href="https://github.com/Smithay/smithay/issues/96"&gt;#96&lt;/a&gt;)&lt;/li&gt;
+&lt;li&gt;Implement classic shell interactions in anvil (&lt;a href="https://github.com/Smithay/smithay/issues/94"&gt;#94&lt;/a&gt;)&lt;/li&gt;
+&lt;li&gt;Write some stand-alone focused examples for smithay (&lt;a href="https://github.com/Smithay/smithay/issues/99"&gt;#99&lt;/a&gt;)&lt;/li&gt;
+&lt;li&gt;Design and introduce higher-level abstractions over the low-level support currently implemented&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;If you are interested in the project, feel free to drop by in our matrix chatroom
+&lt;a href="https://matrix.to/#/#smithay:matrix.org"&gt;#smithay:matrix.org&lt;/a&gt;, which is also bridged to mozilla's IRC
+at &lt;em&gt;#smithay&lt;/em&gt; and to gitter at &lt;a href="https://gitter.im/smithay/Lobby"&gt;smithay/Lobby&lt;/a&gt;.&lt;/p&gt;
+&lt;p&gt;A large part of the work needed on smithay does not require extensive knowledge on the wayland protocol
+or the linux internals, and we are happy to mentor anyone interested in getting familiar with the project!&lt;/p&gt;</content><category term="Releases"></category></entry><entry><title>Wayland-rs 0.21: Pure rust implementation</title><link href="https://smithay.github.io/wayland-rs-v-0-21.html" rel="alternate"></link><published>2018-07-18T22:00:00+02:00</published><updated>2018-07-18T22:00:00+02:00</updated><author><name>Victor Berger</name></author><id>tag:smithay.github.io,2018-07-18:/wayland-rs-v-0-21.html</id><summary type="html">&lt;p&gt;Announcement of v0.21 of wayland-rs, featuring a pure rust implementation of the wayland protocol.&lt;/p&gt;</summary><content type="html">&lt;blockquote&gt;
+&lt;p&gt;&lt;a href="https://github.com/Smithay/wayland-rs"&gt;wayland-rs&lt;/a&gt; is a set of crates providing generic APIs to
+manipulate the &lt;a href="https://en.wikipedia.org/wiki/Wayland_(display_server_protocol)"&gt;Wayland protocol&lt;/a&gt;, 
+successor of X11 for linux windowing.&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;Here I am finally, after having
+&lt;a href="https://github.com/Smithay/wayland-rs/pull/165"&gt;hinted at the possibility&lt;/a&gt; and finally taken the
+time to write and merge &lt;a href="https://github.com/Smithay/wayland-rs/pull/170"&gt;quite an epic pull request&lt;/a&gt;,
+I can finally say it: wayland-rs is now a pure rust implementation of the protocol, rather than a
+crate of bindings to the &lt;a href="https://gitlab.freedesktop.org/wayland/wayland"&gt;wayland system C libraries&lt;/a&gt;.&lt;/p&gt;
+&lt;p&gt;Or is it? The people who have already discussed this matter know that abandoning the C wayland
+libraries is really cutting oneself from many interactions. It is most notably required by OpenGL, but also
+any other C library that you'd want to use and that interacts directly with wayland like GStreamer for
+example. This is obviously not something I'm ready (nor willing) to impose on the users of wayland-rs,
+among which are &lt;a href="https://github.com/tomaka/winit"&gt;winit&lt;/a&gt; and &lt;a href="https://github.com/tomaka/glutin"&gt;glutin&lt;/a&gt;,
+which quite  obviously need access to OpenGL...&lt;/p&gt;
+&lt;p&gt;This is why starting from the upcoming 0.21 release, wayland-client and wayland-server will simply let
+you choose what you want: the rust implementation or the C one.&lt;/p&gt;
+&lt;p&gt;This note is organized in three parts: first I'll detail what is the new design of the wayland-rs 
+crates and how they can be used, then I'll detail what the future looks like, and finally I'll share
+some insights, ideas, thoughts and frustrations I had during my work on this implementation.&lt;/p&gt;
+&lt;h3&gt;The new organization of wayland-rs&lt;/h3&gt;
+&lt;p&gt;While the API itself did not change a lot from 0.20 to 0.21, there was a very significant refactor
+of both wayland-client and wayland-server, shaping them around the new &lt;code&gt;native_lib&lt;/code&gt; cargo feature.
+The deal is simple, by default the crates use the rust implementation, and if you activate the feature
+they'll switch to using the system libraries, and expose new parts of the API which give you access
+to the necessary C pointers, allowing you to provide them to other C libraries that may need them.&lt;/p&gt;
+&lt;p&gt;In previous versions, the &lt;code&gt;native_lib&lt;/code&gt; feature flag was activated by default, and disabling it caused
+your program to quickly die on our dear &lt;code&gt;unimplemented!()&lt;/code&gt; macro. This is no longer the case!&lt;/p&gt;
+&lt;p&gt;Client side, the &lt;code&gt;egl&lt;/code&gt; feature of &lt;code&gt;wayland-client&lt;/code&gt; automatically pulls the &lt;code&gt;native_lib&lt;/code&gt; feature, as
+it is mandatory for OpenGL support and interacting with Mesa. Which means that either you were not
+using OpenGL, an you should be able to seamlessly migrate to the rust implementation, or you were
+using OpenGL and the crate will just stick to using the system libraries.&lt;/p&gt;
+&lt;h3&gt;What's next?&lt;/h3&gt;
+&lt;p&gt;The 0.21 version is not yet released. While my implementation passes the few tests I've done manually,
+I'm not yet to a coverage and testing I'm confident enough with to make it default. As such I'm only
+releasing a &lt;code&gt;0.21.0-alpha1&lt;/code&gt; version, to test it more thoroughly before making it the default.&lt;/p&gt;
+&lt;p&gt;Now that this huge milestone is reached, I'm going to radically switch the direction development of
+these crates. Up to now, I've mostly focused in making an API as reasonable as possible, but deeply
+rooted in the API exposed by the C libs I've been building upon. This will now change, as I plan for
+the Rust implementation to be the core drive of design of the crates, and relegate the C backend to
+be the one retrofitted into the rust API.&lt;/p&gt;
+&lt;p&gt;This opens a lot of design space, and as such there are numerous questions I'm not settled yet on.
+If you want to take part in this, I'd be glad to hear (or read) what you have to say! I'm
+using the &lt;a href="https://github.com/Smithay/wayland-rs/issues"&gt;github issue tracker&lt;/a&gt; to keep track of my
+questions and ideas. If you first want to get used with the libs, you can help too!
+&lt;a href="https://github.com/Smithay/wayland-rs/tree/master/tests"&gt;There are tons of tests that need to be written&lt;/a&gt;,
+and I'm willing to mentor anyone who wants to help.&lt;/p&gt;
+&lt;h3&gt;The thoughts and insights&lt;/h3&gt;
+&lt;p&gt;The pasts versions of these crates have been an incredible learning experience for me, notably on
+the exercise of trying to implement a safe and ergonomic API on top of a C lib that is definitely not
+rust-friendly. But actually implementing the protocol itself was quite a new level. I actually 
+designed the groundwork for this almost a year ago, and had the branch sleeping on my computer until
+I started seriously working on it again 2 months ago. I took some inspiration from
+&lt;a href="https://github.com/perceptia/skylane"&gt;skylane&lt;/a&gt;, but my work was really mostly reverse-engineering the
+C libs and taking inspiration from them.&lt;/p&gt;
+&lt;h4&gt;The protocol itself&lt;/h4&gt;
+&lt;p&gt;A large design constraint lies in the protocol itself. Wayland is spoken by binary messages over an
+unix socket. It is an object oriented protocol, where each message is associated to an object which
+defines its interface.&lt;/p&gt;
+&lt;p&gt;Which means that, to parse a message, you must know the type of the object that sent it. Which means
+a large part of the work of the implementation is actually to keep track of the map of which object
+exists and what their types are. And given a message can create or destroy objects, you need to have
+at least partially processed a message to be able to even &lt;em&gt;parse&lt;/em&gt; the next one! Talk about being
+stateful.&lt;/p&gt;
+&lt;p&gt;This is quite a constraint on the implementation, and I now better understand how well the callback
+oriented approach of the C libraries fits this protocol: the wayland using program provides a large
+set of callbacks to the wayland library, one for each possible message, the lib then takes care of
+firing them.&lt;/p&gt;
+&lt;h4&gt;virtual dispatch and runtime costs&lt;/h4&gt;
+&lt;p&gt;This whole implementation has also been for me quite a wake-up regarding runtime costs. Indeed
+Rust has a powerful monomorphisation and a lot can be done statically, but really, sometimes a
+trait object does the job pretty well, and at a greater simplicity.&lt;/p&gt;
+&lt;p&gt;In my case, it would not have been possible to avoid dynamic dispatch anyway: the contents of the
+messages the lib receive (which are runtime values) determines which of the (statically-typed)
+callbacks should be fired. There is no escape, so I embraced the dynamic dispatch.&lt;/p&gt;
+&lt;p&gt;As a result, I now have the wayland-scanner parsing the XML specifications of the protocol and its
+extensions, generating a lot of rust code, encoding the objects and their interfaces in various traits
+with associated types and constants. These traits allow me to build a dynamic representation of the 
+objects and their interfaces that the parser can then use at runtime to parse the protocol and 
+dispatch the messages to their callbacks.&lt;/p&gt;
+&lt;p&gt;In particular, I'm doing what I started calling "manual vtables" after a little epiphany I had 
+working on that. Because yeah, storing a function pointer in a struct is not very different from
+a vtable, is it?&lt;/p&gt;
+&lt;p&gt;For example I have this &lt;code&gt;Object&lt;/code&gt; type. It does not has any type parameter linked to the
+wayland objects. I can create an &lt;code&gt;Object&lt;/code&gt; from a type &lt;code&gt;I&lt;/code&gt; implementing my &lt;code&gt;Interface&lt;/code&gt; trait:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="kd"&gt;let&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;my_object&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;Object&lt;/span&gt;::&lt;span class="n"&gt;from_interface&lt;/span&gt;::&lt;span class="o"&gt;&amp;lt;&lt;/span&gt;&lt;span class="n"&gt;I&lt;/span&gt;&lt;span class="o"&gt;&amp;gt;&lt;/span&gt;&lt;span class="p"&gt;();&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+
+&lt;p&gt;This is my bridge from the static world to the dynamic one. The fields of the &lt;code&gt;Object&lt;/code&gt; are filled
+with the values from the associated constants of &lt;code&gt;I&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;And among the fields of &lt;code&gt;Object&lt;/code&gt; are a few function pointers, like &lt;code&gt;fn(u16, u32) -&amp;gt; Option&amp;lt;Object&amp;gt;&lt;/code&gt;,
+which are initialized by specializing generic functions:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="k"&gt;fn&lt;/span&gt; &lt;span class="nf"&gt;something&lt;/span&gt;&lt;span class="o"&gt;&amp;lt;&lt;/span&gt;&lt;span class="n"&gt;I&lt;/span&gt;: &lt;span class="nc"&gt;Interface&lt;/span&gt;&lt;span class="o"&gt;&amp;gt;&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;a&lt;/span&gt;: &lt;span class="kt"&gt;u16&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;b&lt;/span&gt;: &lt;span class="kt"&gt;u32&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;-&amp;gt; &lt;span class="nb"&gt;Option&lt;/span&gt;&lt;span class="o"&gt;&amp;lt;&lt;/span&gt;&lt;span class="n"&gt;Object&lt;/span&gt;&lt;span class="o"&gt;&amp;gt;&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// compute something using a, b, and the associated constants of I&lt;/span&gt;
+&lt;span class="p"&gt;}&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+
+&lt;span class="kd"&gt;let&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;object&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;Object&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="n"&gt;something_func&lt;/span&gt;: &lt;span class="nc"&gt;something&lt;/span&gt;::&lt;span class="o"&gt;&amp;lt;&lt;/span&gt;&lt;span class="n"&gt;MyInterface&lt;/span&gt;&lt;span class="o"&gt;&amp;gt;&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="o"&gt;..&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="p"&gt;}&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+
+&lt;p&gt;It's not a revolution, but I thought this was an interesting way to use the trait system. My
+implementation has a lot of these all over the place, in a deep mix of static and dynamic
+dispatch.&lt;/p&gt;
+&lt;p&gt;To be fair, the C-based code does also have these, so this is not really new. You need to have
+a way to retrieve some type information from a C callback where you only provide a function
+pointer and a &lt;code&gt;*mut c_void&lt;/code&gt; data!&lt;/p&gt;
+&lt;h4&gt;&lt;code&gt;Rc&lt;/code&gt;, &lt;code&gt;Refcell&lt;/code&gt;, &lt;code&gt;Arc&lt;/code&gt; and &lt;code&gt;Mutex&lt;/code&gt; are friends, not ennemies&lt;/h4&gt;
+&lt;p&gt;No really, they are all over the place, and they do a pretty good job!&lt;/p&gt;
+&lt;p&gt;It's cool to be able to avoid runtime costs if you really need to, but sometimes it's not worth
+the pain. I don't need top performance, as the wayland socket is hardly a bottleneck in general.&lt;/p&gt;
+&lt;p&gt;I thus focused on making things work correctly, without any care for performance. I'll come back
+later to refactor all that anyway, iterating to improve the API's ergonomics.&lt;/p&gt;
+&lt;p&gt;Thanks for reading this, and have some happy Rusting!&lt;/p&gt;</content><category term="Releases"></category></entry><entry><title>An image viewer using Smithay's Client Toolkit</title><link href="https://smithay.github.io/sctk-image-viewer.html" rel="alternate"></link><published>2018-05-10T14:00:00+02:00</published><updated>2018-05-10T14:00:00+02:00</updated><author><name>Victor Berger</name></author><id>tag:smithay.github.io,2018-05-10:/sctk-image-viewer.html</id><summary type="html">&lt;p&gt;Small tutorial of using Smithay's Client Toolkit by example, building a small image viewer as a Wayland client.&lt;/p&gt;</summary><content type="html">&lt;p&gt;Following &lt;a href="/wayland-rs-v-0-20.html"&gt;the previous announce of Smithay's Client Toolkit&lt;/a&gt;, this
+post aims at giving a general feeling of how this toolkit can be used, and in general how
+Wayland client apps are written. To do so, I'll first recap some general information about
+how Wayland works, and then do a step by step construction of a simple Wayland image viewer
+app.&lt;/p&gt;
+&lt;p&gt;&lt;center&gt;&lt;img alt="The image viewer started in rootson" src="/images/img_viewer.png"&gt;&lt;/center&gt;&lt;/p&gt;
+&lt;h2&gt;Some context: how Wayland works&lt;/h2&gt;
+&lt;p&gt;Wayland as its core is an object-based message-passing protocol. What I mean by that is that
+a client app will need to connect to a unix socket on which the Wayland server is listening,
+and then, via this socket connection the client will send requests to the server ("I want to
+receive pointer inputs", "I want to draw this", etc...), and receive events from the server
+("The pointer moved to this location", "the user pressed this key", etc...). These messages
+are attached to objects, which are a protocol construct. For example, a client interested in
+receiving pointer inputs will create an instance of the &lt;code&gt;wl_pointer&lt;/code&gt; interface (think class),
+and all messages regarding pointer input will be received through this object.&lt;/p&gt;
+&lt;p&gt;As said previously, all messages are attached to an object, and objects are created or destroyed
+by messages. Thus all objects are created by messages of another object, which is then its
+parent. This way, we can see the hierarchy of all objects as a tree. At its root there is the
+&lt;code&gt;wl_display&lt;/code&gt;. This object is automatically created when the connection is established, and
+represents the connection itself. From the display a client will instantiate the &lt;code&gt;wl_registry&lt;/code&gt;,
+which is the real core of the protocol tree.&lt;/p&gt;
+&lt;p&gt;Via events associated to this registry, the client will be notified of the existence of various
+global objects. These objects can be instantiated from the registry, and are global in the
+sense that they represent an underlying resource, and no matter how many times you create
+an instance of a global, all these instances represent the same underlying resource.&lt;/p&gt;
+&lt;p&gt;There are two kinds of globals:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Those that represent a capability of the Wayland server. For example the &lt;code&gt;wl_shm&lt;/code&gt; reprensents
+  the capability to use shared-memory buffers.&lt;/li&gt;
+&lt;li&gt;Those that represent a resource accessible to the compositor. Typically a peripheral (be it
+  physical or logical). These can exist more than one time, for example each monitor connected to
+  the computer will appear in the registry as a &lt;code&gt;wl_output&lt;/code&gt; global.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;From these globals, the client can create more objects (each global defining a subtree of
+objects) and send requests and receive events through them. All Wayland interactions
+are done this way.&lt;/p&gt;
+&lt;p&gt;The protocol is also extensible: the list of possible interfaces as well as their associated
+requests and events are defined in XML files. There is one defining the core protocol (which
+notably includes the &lt;code&gt;wl_diplay&lt;/code&gt; and &lt;code&gt;wl_registry&lt;/code&gt; interfaces) that every Wayland server is
+expected to implement. Additional protocol extensions can also be supported, defined in other
+protocol XML files. They appear as more globals in the registry that are simply ingored by
+clients not supporting these extensions.&lt;/p&gt;
+&lt;p&gt;With this in mind, let's start writing our app with Smithay's Client Toolkit (that I'll 
+abbreviate as SCTK from now on).&lt;/p&gt;
+&lt;h2&gt;A simple app: image viewer&lt;/h2&gt;
+&lt;p&gt;Our goal here is to build a very simple client: we will start it from command line
+giving it an image file as argument, and it will just open a window showing this image.
+We'll also make the window resizable, and it will rescale the image appropriately.&lt;/p&gt;
+&lt;h3&gt;Image loading&lt;/h3&gt;
+&lt;p&gt;The first part or our app is thus loading this image. This is in no way Wayland-specific,
+and we'll just use the &lt;code&gt;image&lt;/code&gt; crate for that:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="k"&gt;extern&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="k"&gt;crate&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;image&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+
+&lt;span class="k"&gt;use&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;std&lt;/span&gt;::&lt;span class="n"&gt;env&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+
+&lt;span class="k"&gt;fn&lt;/span&gt; &lt;span class="nf"&gt;main&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// First of all, retrieve the path from the program arguments:&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="kd"&gt;let&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;path&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="k"&gt;match&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;env&lt;/span&gt;::&lt;span class="n"&gt;args_os&lt;/span&gt;&lt;span class="p"&gt;().&lt;/span&gt;&lt;span class="n"&gt;skip&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="mi"&gt;1&lt;/span&gt;&lt;span class="p"&gt;).&lt;/span&gt;&lt;span class="n"&gt;next&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="nb"&gt;Some&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;p&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&amp;gt;&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;p&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="nb"&gt;None&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&amp;gt;&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="n"&gt;println&lt;/span&gt;&lt;span class="o"&gt;!&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="s"&gt;&amp;quot;USAGE: ./image_wiewer &amp;lt;PATH&amp;gt;&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;);&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="k"&gt;return&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="p"&gt;}&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="p"&gt;};&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// now, try to open the image&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// the image crate will take care of auto-detecting the file format&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="kd"&gt;let&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;image&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="k"&gt;match&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;image&lt;/span&gt;::&lt;span class="n"&gt;open&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="o"&gt;&amp;amp;&lt;/span&gt;&lt;span class="n"&gt;path&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="nb"&gt;Ok&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;i&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&amp;gt;&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;i&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="nb"&gt;Err&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;e&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&amp;gt;&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="n"&gt;println&lt;/span&gt;&lt;span class="o"&gt;!&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="s"&gt;&amp;quot;Failed to open image {}.&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;path&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;to_string_lossy&lt;/span&gt;&lt;span class="p"&gt;());&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="n"&gt;println&lt;/span&gt;&lt;span class="o"&gt;!&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="s"&gt;&amp;quot;Error was: {:?}&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;e&lt;/span&gt;&lt;span class="p"&gt;);&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="k"&gt;return&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="p"&gt;}&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="p"&gt;};&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// We&amp;#39;ll need the image in RGBA for drawing it&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="kd"&gt;let&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;image&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;image&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;to_rgba&lt;/span&gt;&lt;span class="p"&gt;();&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// ...&lt;/span&gt;
+&lt;span class="p"&gt;}&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+
+&lt;p&gt;That was the easy part, we now have the image loaded in memory. Time to initialize the
+Wayland setup.&lt;/p&gt;
+&lt;h3&gt;Wayland setup&lt;/h3&gt;
+&lt;p&gt;First of all, we need to connect to the Wayland server:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="k"&gt;extern&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="k"&gt;crate&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;smithay&lt;/span&gt;&lt;span class="o"&gt;-&lt;/span&gt;&lt;span class="n"&gt;client&lt;/span&gt;&lt;span class="o"&gt;-&lt;/span&gt;&lt;span class="n"&gt;toolkit&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="k"&gt;as&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;sctk&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="c1"&gt;// sctk reexports Wayland-client for convenience&lt;/span&gt;
+&lt;span class="k"&gt;use&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;sctk&lt;/span&gt;::&lt;span class="n"&gt;reexports&lt;/span&gt;::&lt;span class="n"&gt;client&lt;/span&gt;::&lt;span class="n"&gt;Display&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+
+&lt;span class="k"&gt;fn&lt;/span&gt; &lt;span class="nf"&gt;main&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// ...&lt;/span&gt;
+
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="kd"&gt;let&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;display&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="k"&gt;mut&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;event_queue&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;Display&lt;/span&gt;::&lt;span class="n"&gt;connect_to_env&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;                                        &lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;expect&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="s"&gt;&amp;quot;Failed to connect to the Wayland server.&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;);&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// ...&lt;/span&gt;
+&lt;span class="p"&gt;}&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+
+&lt;p&gt;This &lt;code&gt;connect_to_env()&lt;/code&gt; function tells Wayland-client to try to connect to a Wayland
+server according to the configuration of the environment variables. This is what most
+Wayland clients are expected to do.&lt;/p&gt;
+&lt;p&gt;Now, from this client, we are supposed to retrieve the &lt;code&gt;wl_registry&lt;/code&gt; and process its
+events to retrieve the global list and bind the globals we need. For this, SCTK provides
+us with a first utility that does that for us: &lt;code&gt;sctk::Environment&lt;/code&gt;. It takes a registry
+as an argument, wraps it, processes its events and automatically binding the most classic
+globals. This will be sufficient for our example.&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="k"&gt;use&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;sctk&lt;/span&gt;::&lt;span class="n"&gt;Environment&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="c1"&gt;// our display object is actually of type `Proxy&amp;lt;WlDisplay&amp;gt;`, so we need to import&lt;/span&gt;
+&lt;span class="c1"&gt;// this extension trait to access methods representing its requests&lt;/span&gt;
+&lt;span class="k"&gt;use&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;sctk&lt;/span&gt;::&lt;span class="n"&gt;reexports&lt;/span&gt;::&lt;span class="n"&gt;client&lt;/span&gt;::&lt;span class="n"&gt;protocol&lt;/span&gt;::&lt;span class="n"&gt;wl_display&lt;/span&gt;::&lt;span class="n"&gt;RequestsTrait&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="k"&gt;as&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;DisplayRequests&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+
+&lt;span class="k"&gt;fn&lt;/span&gt; &lt;span class="nf"&gt;main&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// ..&lt;/span&gt;
+
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// All request method of Wayland objects return a `Result`, as Wayland-client&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// returns an error if you try to send a message on an object that has already&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// been destroyed by a previous message. We know our display has not been&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// destroyed, so we unwrap().&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="kd"&gt;let&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;registry&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;display&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;get_registry&lt;/span&gt;&lt;span class="p"&gt;().&lt;/span&gt;&lt;span class="n"&gt;unwrap&lt;/span&gt;&lt;span class="p"&gt;();&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// The Environment takes a registry and a mutable borrow of the Wayland event&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// queue. It uses the event queue internally to exchange messages with the server&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// to process the registry event.&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// Like all manipulation of the event loop, it can fail (if the connection is&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// unexpectedly lost), and thus returns a Result. This failing would prevent&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// us to continue though, so we unrap().&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="kd"&gt;let&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;env&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;Environment&lt;/span&gt;::&lt;span class="n"&gt;from_registry&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;registry&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;&amp;amp;&lt;/span&gt;&lt;span class="k"&gt;mut&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;event_queue&lt;/span&gt;&lt;span class="p"&gt;).&lt;/span&gt;&lt;span class="n"&gt;unwrap&lt;/span&gt;&lt;span class="p"&gt;();&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// ..&lt;/span&gt;
+&lt;span class="p"&gt;}&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+
+&lt;p&gt;Once &lt;code&gt;Environment::from_registry(..)&lt;/code&gt; returns, we get an already-initialized &lt;code&gt;Environment&lt;/code&gt;
+with various Wayland globals already bound, available as public fields. First of all,
+we will use the &lt;code&gt;wl_compositor&lt;/code&gt; global to create a &lt;code&gt;wl_surface&lt;/code&gt;. The surfaces are the most
+fundamental building block of a Wayland app. It describes a rectangle of pixels to which
+you can attach a &lt;code&gt;wl_buffer&lt;/code&gt; defining its contents. A Wayland app is built on surfaces:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Most often, they can be assigned a role. The most classic one would be "toplevel surface",
+  meaning this surface is actually a window in the traditional sense. But surfaces can also
+  be used to change the image of the mouse pointer for example.&lt;/li&gt;
+&lt;li&gt;They can be defined relative to a parent surface (they are then a "subsurface"), this can
+  typically be useful if different parts of your UI are drawn by different means. For example,
+  a video player could use GPU-accelerated routines to decode and display the contents of the
+  video, and draw the rest of its UI using the CPU. Subsurfaces are also what SCTK uses
+  to draw the decorations of your windows, as we'll see later.&lt;/li&gt;
+&lt;li&gt;Input information is given relative to surfaces. A Wayland app does not know the absolute location
+  of the pointer for example, but if the pointer is on top of one of its surfaces, it knows its
+  location relative to it.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="c1"&gt;// the extension trait providing the requests for the compositor object&lt;/span&gt;
+&lt;span class="k"&gt;use&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;sctk&lt;/span&gt;::&lt;span class="n"&gt;reexports&lt;/span&gt;::&lt;span class="n"&gt;client&lt;/span&gt;::&lt;span class="n"&gt;protocol&lt;/span&gt;::&lt;span class="n"&gt;wl_compositor&lt;/span&gt;::&lt;span class="n"&gt;RequestsTrait&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="k"&gt;as&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;CompositorRequests&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+
+&lt;span class="k"&gt;fn&lt;/span&gt; &lt;span class="nf"&gt;main&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// ..&lt;/span&gt;
+
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// Use the compositor global to create a new surface&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="kd"&gt;let&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;surface&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;env&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;compositor&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;create_surface&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;unwrap&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="c1"&gt;// unwrap for the same reasons as before, we know the compositor&lt;/span&gt;
+&lt;span class="w"&gt;                  &lt;/span&gt;&lt;span class="c1"&gt;// is not yet destroyed&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;implement&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="o"&gt;|&lt;/span&gt;&lt;span class="n"&gt;_event&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;_surface&lt;/span&gt;&lt;span class="o"&gt;|&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="c1"&gt;// Here we implement this surface with a closure processing&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="c1"&gt;// the event&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="c1"&gt;//&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="c1"&gt;// Surface events notify us when it enters or leave an output,&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="c1"&gt;// this is mostly useful to track HiDPI-scaling.&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="c1"&gt;//&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="c1"&gt;// We don&amp;#39;t do it in this example, so this closure ignores all&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="c1"&gt;// events by doing nothing.&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="p"&gt;});&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// ..&lt;/span&gt;
+&lt;span class="p"&gt;}&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+
+&lt;p&gt;Once this surface exists, we'll use it as the main surface of our app, the one
+on which we'll draw the image we loaded earlier. However, we must first declare that
+this surface will be our main surface, by assigning it the "toplevel surface" role.&lt;/p&gt;
+&lt;p&gt;SCTK provides a convenience type named &lt;code&gt;Window&lt;/code&gt;, which handles this for us, as well as
+a few other things:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;it draws decorations around our surface to make it look like a window (the grey
+  borders you saw in the screenshot above)&lt;/li&gt;
+&lt;li&gt;it processes most of the shell interaction for us (maximizing/minimizing, etc..)&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;But it cannot do everything, and requires us to provide a callback to which some
+events will be given that we'll process ourselves.&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="k"&gt;use&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;sctk&lt;/span&gt;::&lt;span class="n"&gt;window&lt;/span&gt;::&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="n"&gt;BasicFrame&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;Event&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="k"&gt;as&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;WEvent&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;State&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;Window&lt;/span&gt;&lt;span class="p"&gt;};&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+
+&lt;span class="k"&gt;fn&lt;/span&gt; &lt;span class="nf"&gt;main&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// ..&lt;/span&gt;
+
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// First of all, this Arc&amp;lt;Mutex&amp;lt;Option&amp;lt;WEvent&amp;gt;&amp;gt;&amp;gt; will store&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// any event from the window that we need to process. We&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// store them and will process them later in the event loop&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// rather that process them directly because in a batch of&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// generated events, often only the last one needs to actually&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// be processed, and some events may render other obsoletes.&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// See the closure a few lines below for details&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="kd"&gt;let&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;next_action&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;Arc&lt;/span&gt;::&lt;span class="n"&gt;new&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;Mutex&lt;/span&gt;::&lt;span class="n"&gt;new&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="nb"&gt;None&lt;/span&gt;::&lt;span class="o"&gt;&amp;lt;&lt;/span&gt;&lt;span class="n"&gt;WEvent&lt;/span&gt;&lt;span class="o"&gt;&amp;gt;&lt;/span&gt;&lt;span class="p"&gt;));&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// We clone the arc to pass one end to the closure&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="kd"&gt;let&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;waction&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;next_action&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;clone&lt;/span&gt;&lt;span class="p"&gt;();&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// Now we actually create the window. The type parameter `BasicFrame` here&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// specifies the type we want to use to draw the borders. SCTK currently&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// only provide this one, but if you don&amp;#39;t like the (arguably ugly)&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// borders it draws, you just need to implement the appropriate trait&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// to create your own.&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="kd"&gt;let&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="k"&gt;mut&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;window&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;Window&lt;/span&gt;::&lt;span class="o"&gt;&amp;lt;&lt;/span&gt;&lt;span class="n"&gt;BasicFrame&lt;/span&gt;&lt;span class="o"&gt;&amp;gt;&lt;/span&gt;::&lt;span class="n"&gt;init&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="n"&gt;surface&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt;           &lt;/span&gt;&lt;span class="c1"&gt;// the wl_surface that serves as the basis of this window&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="n"&gt;image&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;dimensions&lt;/span&gt;&lt;span class="p"&gt;(),&lt;/span&gt;&lt;span class="c1"&gt;// the initial internal dimensions of the window (so excluding decorations)&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="o"&gt;&amp;amp;&lt;/span&gt;&lt;span class="n"&gt;env&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;compositor&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt;   &lt;/span&gt;&lt;span class="c1"&gt;// -+&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="o"&gt;&amp;amp;&lt;/span&gt;&lt;span class="n"&gt;env&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;subcompositor&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="c1"&gt;//  | The Window constructor needs access to these globals&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="o"&gt;&amp;amp;&lt;/span&gt;&lt;span class="n"&gt;env&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;shm&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt;          &lt;/span&gt;&lt;span class="c1"&gt;//  | to initialize the window&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="o"&gt;&amp;amp;&lt;/span&gt;&lt;span class="n"&gt;env&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;shell&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="c1"&gt;// -+&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="k"&gt;move&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;|&lt;/span&gt;&lt;span class="n"&gt;evt&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;&lt;span class="o"&gt;|&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="c1"&gt;// This is the closure that processes the Window events.&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="c1"&gt;// There are 3 possible events:&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="c1"&gt;// - Close: the user requested the window to be closed, we&amp;#39;ll then quit&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="c1"&gt;// - Configure: the server suggested a new state for the window (possibly&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="c1"&gt;//   a new size if a resize is in progress). We&amp;#39;ll likely need to redraw&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="c1"&gt;//   our contents&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="c1"&gt;// - Refresh: the frame itself needs to be redrawn. SCTK does not do this&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="c1"&gt;//   automatically because it has a cost and should only be done in parts&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="c1"&gt;//   of the event loop where the client actually wants to draw&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="c1"&gt;// Here we actually only keep the last event received according to a priority&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="c1"&gt;// order of Close &amp;gt; Configure &amp;gt; Refresh.&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="c1"&gt;// Indeed, if we received a Close, there is not point drawing anything anymore as&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="c1"&gt;// we will exit. A new Configure overrides a previous one, and if we received&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="c1"&gt;// a Configure we will refresh the frame anyway.&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="kd"&gt;let&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="k"&gt;mut&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;next_action&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;waction&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;lock&lt;/span&gt;&lt;span class="p"&gt;().&lt;/span&gt;&lt;span class="n"&gt;unwrap&lt;/span&gt;&lt;span class="p"&gt;();&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="c1"&gt;// Check if we need to replace the old event by the new one&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="kd"&gt;let&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;replace&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="k"&gt;match&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="o"&gt;&amp;amp;&lt;/span&gt;&lt;span class="n"&gt;evt&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;&amp;amp;*&lt;/span&gt;&lt;span class="n"&gt;next_action&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;                &lt;/span&gt;&lt;span class="c1"&gt;// replace if there is no old event&lt;/span&gt;
+&lt;span class="w"&gt;                &lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;_&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;&amp;amp;&lt;/span&gt;&lt;span class="nb"&gt;None&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;                &lt;/span&gt;&lt;span class="c1"&gt;// or the old event is refresh&lt;/span&gt;
+&lt;span class="w"&gt;                &lt;/span&gt;&lt;span class="o"&gt;|&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;_&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;&amp;amp;&lt;/span&gt;&lt;span class="nb"&gt;Some&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;WEvent&lt;/span&gt;::&lt;span class="n"&gt;Refresh&lt;/span&gt;&lt;span class="p"&gt;))&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;                &lt;/span&gt;&lt;span class="c1"&gt;// or we had a configure and received a new one&lt;/span&gt;
+&lt;span class="w"&gt;                &lt;/span&gt;&lt;span class="o"&gt;|&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="o"&gt;&amp;amp;&lt;/span&gt;&lt;span class="n"&gt;WEvent&lt;/span&gt;::&lt;span class="n"&gt;Configure&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;..&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;},&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;&amp;amp;&lt;/span&gt;&lt;span class="nb"&gt;Some&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;WEvent&lt;/span&gt;::&lt;span class="n"&gt;Configure&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;..&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;}))&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;                &lt;/span&gt;&lt;span class="c1"&gt;// or the new event is close&lt;/span&gt;
+&lt;span class="w"&gt;                &lt;/span&gt;&lt;span class="o"&gt;|&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="o"&gt;&amp;amp;&lt;/span&gt;&lt;span class="n"&gt;WEvent&lt;/span&gt;::&lt;span class="n"&gt;Close&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;_&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&amp;gt;&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="kc"&gt;true&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;                &lt;/span&gt;&lt;span class="c1"&gt;// keep the old event otherwise&lt;/span&gt;
+&lt;span class="w"&gt;                &lt;/span&gt;&lt;span class="n"&gt;_&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&amp;gt;&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="kc"&gt;false&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="p"&gt;};&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="k"&gt;if&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;replace&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;                &lt;/span&gt;&lt;span class="o"&gt;*&lt;/span&gt;&lt;span class="n"&gt;next_action&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nb"&gt;Some&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;evt&lt;/span&gt;&lt;span class="p"&gt;);&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="p"&gt;}&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="p"&gt;},&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="c1"&gt;// creating the window may fail if the code drawing the frame&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="c1"&gt;// fails to initialize itself. For BasicFrame this should not happen&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="c1"&gt;// unless the system is utterly broken, though.&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="p"&gt;).&lt;/span&gt;&lt;span class="n"&gt;expect&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="s"&gt;&amp;quot;Failed to create a window !&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;);&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// The window needs access to pointer inputs to handle the user interaction&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// with it: resizing/moving the window, or clicking its button.&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// user interaction in Wayland is done via the wl_seat object, which represents&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// a set of pointer/keyboard/touchscreen (some may be absent) that logically&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// represent a single user. Most systems have only one seat, multi-seat configurations&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// are quite exotic.&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// Thus, we just automatically bind the first seat we find.&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="kd"&gt;let&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;seat&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;env&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;manager&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;instantiate_auto&lt;/span&gt;::&lt;span class="o"&gt;&amp;lt;&lt;/span&gt;&lt;span class="n"&gt;wl_seat&lt;/span&gt;::&lt;span class="n"&gt;WlSeat&lt;/span&gt;&lt;span class="o"&gt;&amp;gt;&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;unwrap&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;implement&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="k"&gt;move&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;|&lt;/span&gt;&lt;span class="n"&gt;_&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;_&lt;/span&gt;&lt;span class="o"&gt;|&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{});&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// And advertize it to the Window so it knows of it and can process the&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// required pointer events.&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="n"&gt;window&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;new_seat&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="o"&gt;&amp;amp;&lt;/span&gt;&lt;span class="n"&gt;seat&lt;/span&gt;&lt;span class="p"&gt;);&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// ..&lt;/span&gt;
+&lt;span class="p"&gt;}&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+
+&lt;p&gt;At this point, we have created most of the Wayland objects we'll need for this app.
+It's time to jump to the next step:&lt;/p&gt;
+&lt;h3&gt;Drawing the contents&lt;/h3&gt;
+&lt;p&gt;In here we'll intialize a few more resources we need to do our drawing, and define
+a function that redraws our window for a given size, resizing the loaded image if
+necessary.&lt;/p&gt;
+&lt;p&gt;Defining the contents of a surfaces is done in Wayland by first drawing the content,
+creating a &lt;code&gt;wl_buffer&lt;/code&gt; referencing this content, and then attaching the buffer to the
+surface. The two main ways of sharing buffers is via OpenGL or shared memory
+in case of CPU drawing. We'll stick to manually writing the pixels for this app.&lt;/p&gt;
+&lt;p&gt;A shared memory pool in Wayland context is just a file (more precisely a tempfile that
+exists only in memory, not on disk) into which the client writes some content. The client
+then shares the file descriptor with the server, and when creating a buffer, specifies that
+the buffer refers to a certain set of pixels in the file. The server will then just read these
+pixels in the shared file to know the contents of the surface this buffer was attached to.&lt;/p&gt;
+&lt;p&gt;Now, there is an obvious possibility of race if the client writes the file at the same
+time as the server reads it. To handle this, the server actually sends an event on the
+buffer to notify that it has finished reading the contents associated with the buffer.
+The client is expected to manage the double-buffering accordingly.&lt;/p&gt;
+&lt;p&gt;For this purpose, SCTK provides two tools. The first is &lt;code&gt;MemPool&lt;/code&gt;, which is an abstraction
+over a shared memory pool, managing the transmission of the shared file to the server.
+The second one is &lt;code&gt;DoubleMemPool&lt;/code&gt;. As you may guess, this holds two &lt;code&gt;MemPool&lt;/code&gt;. It gives
+you access to one of them, and a way to swap them. A small convenience for doing
+double-buffering.&lt;/p&gt;
+&lt;p&gt;Creating our &lt;code&gt;DoubleMemPool&lt;/code&gt; is quite simple:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="k"&gt;use&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;sctk&lt;/span&gt;::&lt;span class="n"&gt;utils&lt;/span&gt;::&lt;span class="n"&gt;DoubleMemPool&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+
+&lt;span class="k"&gt;fn&lt;/span&gt; &lt;span class="nf"&gt;main&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// ...&lt;/span&gt;
+
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// DoubleMemPool::new() requires access to the wl_shm global, which represents&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// the capability of the server to use shared memory (SHM). All Wayland servers&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// are required to support it.&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="kd"&gt;let&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="k"&gt;mut&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;pools&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;DoubleMemPool&lt;/span&gt;::&lt;span class="n"&gt;new&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="o"&gt;&amp;amp;&lt;/span&gt;&lt;span class="n"&gt;env&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;shm&lt;/span&gt;&lt;span class="p"&gt;).&lt;/span&gt;&lt;span class="n"&gt;expect&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="s"&gt;&amp;quot;Failed to create the memory pools.&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;);&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// ...&lt;/span&gt;
+&lt;span class="p"&gt;}&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+
+&lt;p&gt;We will now write a utility function that will do the drawing itself. Taking a mutable
+borrow of a &lt;code&gt;MemPool&lt;/code&gt;, a reference of our image, and the target dimensions, it will resize
+the image to these dimensions, write it to the memory pool, and return a new buffer to
+the newly drawn contents. We'll actually manage the double buffering in the event loop.&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="k"&gt;extern&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="k"&gt;crate&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;byteorder&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="c1"&gt;// IO types to write the memory pool&lt;/span&gt;
+&lt;span class="k"&gt;use&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;std&lt;/span&gt;::&lt;span class="n"&gt;io&lt;/span&gt;::&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="n"&gt;BufWriter&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;Seek&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;SeekFrom&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;Write&lt;/span&gt;&lt;span class="p"&gt;};&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="k"&gt;use&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;byteorder&lt;/span&gt;::&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="n"&gt;NativeEndian&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;WriteBytesExt&lt;/span&gt;&lt;span class="p"&gt;};&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+
+&lt;span class="k"&gt;use&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;sctk&lt;/span&gt;::&lt;span class="n"&gt;reexports&lt;/span&gt;::&lt;span class="n"&gt;client&lt;/span&gt;::&lt;span class="n"&gt;NewProxy&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="k"&gt;use&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;sctk&lt;/span&gt;::&lt;span class="n"&gt;reexports&lt;/span&gt;::&lt;span class="n"&gt;client&lt;/span&gt;::&lt;span class="n"&gt;protocol&lt;/span&gt;::&lt;span class="n"&gt;wl_buffer&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="k"&gt;use&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;sctk&lt;/span&gt;::&lt;span class="n"&gt;utils&lt;/span&gt;::&lt;span class="n"&gt;MemPool&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+
+&lt;span class="c1"&gt;// The draw function, which draws `base_image` in the provided `MemPool`,&lt;/span&gt;
+&lt;span class="c1"&gt;// at given dimensions, and returns a wl_buffer to it.&lt;/span&gt;
+&lt;span class="c1"&gt;//&lt;/span&gt;
+&lt;span class="c1"&gt;// It simply returns the `NewProxy`, as we&amp;#39;ll take care of implementing the&lt;/span&gt;
+&lt;span class="c1"&gt;// wl_buffer outside of this function.&lt;/span&gt;
+&lt;span class="c1"&gt;//&lt;/span&gt;
+&lt;span class="c1"&gt;// If `base_image` is `None`, it&amp;#39;ll just draw black contents. This is to&lt;/span&gt;
+&lt;span class="c1"&gt;// improve performance during resizing: we need to redraw the window frequently&lt;/span&gt;
+&lt;span class="c1"&gt;// so that its dimensions follow the pointer during the resizing, but resizing the&lt;/span&gt;
+&lt;span class="c1"&gt;// image is costly and long. So during an interactive resize of the window we&amp;#39;ll&lt;/span&gt;
+&lt;span class="c1"&gt;// just draw black contents to not feel laggy.&lt;/span&gt;
+&lt;span class="k"&gt;fn&lt;/span&gt; &lt;span class="nf"&gt;draw&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="n"&gt;pool&lt;/span&gt;: &lt;span class="kp"&gt;&amp;amp;&lt;/span&gt;&lt;span class="nc"&gt;mut&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;MemPool&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="n"&gt;base_image&lt;/span&gt;: &lt;span class="nb"&gt;Option&lt;/span&gt;&lt;span class="o"&gt;&amp;lt;&amp;amp;&lt;/span&gt;&lt;span class="n"&gt;image&lt;/span&gt;::&lt;span class="n"&gt;ImageBuffer&lt;/span&gt;&lt;span class="o"&gt;&amp;lt;&lt;/span&gt;&lt;span class="n"&gt;image&lt;/span&gt;::&lt;span class="n"&gt;Rgba&lt;/span&gt;&lt;span class="o"&gt;&amp;lt;&lt;/span&gt;&lt;span class="kt"&gt;u8&lt;/span&gt;&lt;span class="o"&gt;&amp;gt;&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nb"&gt;Vec&lt;/span&gt;&lt;span class="o"&gt;&amp;lt;&lt;/span&gt;&lt;span class="kt"&gt;u8&lt;/span&gt;&lt;span class="o"&gt;&amp;gt;&amp;gt;&amp;gt;&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;buf_x&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;buf_y&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;: &lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="kt"&gt;u32&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="kt"&gt;u32&lt;/span&gt;&lt;span class="p"&gt;),&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="p"&gt;)&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;-&amp;gt; &lt;span class="nc"&gt;NewProxy&lt;/span&gt;&lt;span class="o"&gt;&amp;lt;&lt;/span&gt;&lt;span class="n"&gt;wl_buffer&lt;/span&gt;::&lt;span class="n"&gt;WlBuffer&lt;/span&gt;&lt;span class="o"&gt;&amp;gt;&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// First of all, we make sure the pool is big enough to hold our&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// image. We&amp;#39;ll write in ARGB8888 format, meaning 4 bytes per pixel.&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// This resize method will only resize the pool if the requested size is bigger&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// than the current size, as Wayland SHM pools are not allowed to shrink.&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;//&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// While writing on the file would automatically grow it, we need to advertize the&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// server of its new size, so the call to this method is necessary.&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="n"&gt;pool&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;resize&lt;/span&gt;&lt;span class="p"&gt;((&lt;/span&gt;&lt;span class="mi"&gt;4&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;*&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;buf_x&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;*&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;buf_y&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="k"&gt;as&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="kt"&gt;usize&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;expect&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="s"&gt;&amp;quot;Failed to resize the memory pool.&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;);&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// Now, we can write the contents. MemPool implements the `Seek` and `Write` traits,&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// so we use it directly as a file to write on.&lt;/span&gt;
+
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// First, seek to the beginning, to overwrite our previous content.&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="kd"&gt;let&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;_&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;pool&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;seek&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;SeekFrom&lt;/span&gt;::&lt;span class="n"&gt;Start&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="p"&gt;));&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="c1"&gt;// A sub-scope to limit our borrow of the pool by this BufWriter.&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="c1"&gt;// This BufWriter will significantly improve our drawing performance,&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="c1"&gt;// by reducing the number of syscals we do. =)&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="kd"&gt;let&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="k"&gt;mut&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;writer&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;BufWriter&lt;/span&gt;::&lt;span class="n"&gt;new&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="o"&gt;&amp;amp;&lt;/span&gt;&lt;span class="k"&gt;mut&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;*&lt;/span&gt;&lt;span class="n"&gt;pool&lt;/span&gt;&lt;span class="p"&gt;);&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="k"&gt;if&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="kd"&gt;let&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nb"&gt;Some&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;base_image&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;base_image&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="c1"&gt;// We have an image to draw&lt;/span&gt;
+
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="c1"&gt;// first, resize it to the requested size. We just use the function provided&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="c1"&gt;// by the image crate here.&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="kd"&gt;let&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;image&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;                &lt;/span&gt;&lt;span class="n"&gt;image&lt;/span&gt;::&lt;span class="n"&gt;imageops&lt;/span&gt;::&lt;span class="n"&gt;resize&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;base_image&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;buf_x&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;buf_y&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;image&lt;/span&gt;::&lt;span class="n"&gt;FilterType&lt;/span&gt;::&lt;span class="n"&gt;Nearest&lt;/span&gt;&lt;span class="p"&gt;);&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="c1"&gt;// Now, we&amp;#39;ll write the pixels of the image to the MemPool.&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="c1"&gt;//&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="c1"&gt;// We do this in an horribly inneficient maneer, for the sake of simplicity.&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="c1"&gt;// We&amp;#39;ll send pixels to the server in ARGB8888 format (this is one of the only&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="c1"&gt;// formats that are guaranteed to be supported), but image provides it in&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="c1"&gt;// RGBA8888, so we need to do the conversion.&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="c1"&gt;//&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="c1"&gt;// Additionnaly, if the image has some transparent parts, we&amp;#39;ll blend them into&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="c1"&gt;// a white background, otherwise the server will draw our window with a&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="c1"&gt;// transparent background!&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="k"&gt;for&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;pixel&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="k"&gt;in&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;image&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;pixels&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;                &lt;/span&gt;&lt;span class="c1"&gt;// retrieve the pixel values&lt;/span&gt;
+&lt;span class="w"&gt;                &lt;/span&gt;&lt;span class="kd"&gt;let&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;r&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;pixel&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;data&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="k"&gt;as&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="kt"&gt;u32&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;                &lt;/span&gt;&lt;span class="kd"&gt;let&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;g&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;pixel&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;data&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="mi"&gt;1&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="k"&gt;as&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="kt"&gt;u32&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;                &lt;/span&gt;&lt;span class="kd"&gt;let&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;b&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;pixel&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;data&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="mi"&gt;2&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="k"&gt;as&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="kt"&gt;u32&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;                &lt;/span&gt;&lt;span class="kd"&gt;let&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;a&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;pixel&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;data&lt;/span&gt;&lt;span class="p"&gt;[&lt;/span&gt;&lt;span class="mi"&gt;3&lt;/span&gt;&lt;span class="p"&gt;]&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="k"&gt;as&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="kt"&gt;u32&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;                &lt;/span&gt;&lt;span class="c1"&gt;// blend them&lt;/span&gt;
+&lt;span class="w"&gt;                &lt;/span&gt;&lt;span class="kd"&gt;let&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;r&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;::&lt;span class="n"&gt;std&lt;/span&gt;::&lt;span class="n"&gt;cmp&lt;/span&gt;::&lt;span class="n"&gt;min&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="mh"&gt;0xFF&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="mh"&gt;0xFF&lt;/span&gt;&lt;span class="o"&gt;*&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="mh"&gt;0xFF&lt;/span&gt;&lt;span class="o"&gt;-&lt;/span&gt;&lt;span class="n"&gt;a&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;+&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;a&lt;/span&gt;&lt;span class="o"&gt;*&lt;/span&gt;&lt;span class="n"&gt;r&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;&lt;span class="o"&gt;/&lt;/span&gt;&lt;span class="mh"&gt;0xFF&lt;/span&gt;&lt;span class="p"&gt;);&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;                &lt;/span&gt;&lt;span class="kd"&gt;let&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;g&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;::&lt;span class="n"&gt;std&lt;/span&gt;::&lt;span class="n"&gt;cmp&lt;/span&gt;::&lt;span class="n"&gt;min&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="mh"&gt;0xFF&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="mh"&gt;0xFF&lt;/span&gt;&lt;span class="o"&gt;*&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="mh"&gt;0xFF&lt;/span&gt;&lt;span class="o"&gt;-&lt;/span&gt;&lt;span class="n"&gt;a&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;+&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;a&lt;/span&gt;&lt;span class="o"&gt;*&lt;/span&gt;&lt;span class="n"&gt;g&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;&lt;span class="o"&gt;/&lt;/span&gt;&lt;span class="mh"&gt;0xFF&lt;/span&gt;&lt;span class="p"&gt;);&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;                &lt;/span&gt;&lt;span class="kd"&gt;let&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;b&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;::&lt;span class="n"&gt;std&lt;/span&gt;::&lt;span class="n"&gt;cmp&lt;/span&gt;::&lt;span class="n"&gt;min&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="mh"&gt;0xFF&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="mh"&gt;0xFF&lt;/span&gt;&lt;span class="o"&gt;*&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="mh"&gt;0xFF&lt;/span&gt;&lt;span class="o"&gt;-&lt;/span&gt;&lt;span class="n"&gt;a&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;+&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;a&lt;/span&gt;&lt;span class="o"&gt;*&lt;/span&gt;&lt;span class="n"&gt;b&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;&lt;span class="o"&gt;/&lt;/span&gt;&lt;span class="mh"&gt;0xFF&lt;/span&gt;&lt;span class="p"&gt;);&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;                &lt;/span&gt;&lt;span class="c1"&gt;// write the pixel&lt;/span&gt;
+&lt;span class="w"&gt;                &lt;/span&gt;&lt;span class="c1"&gt;// We use byteorder, as the Wayland protocol explicitly specifies&lt;/span&gt;
+&lt;span class="w"&gt;                &lt;/span&gt;&lt;span class="c1"&gt;// that the pixels must be written in native endianness&lt;/span&gt;
+&lt;span class="w"&gt;                &lt;/span&gt;&lt;span class="kd"&gt;let&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;_&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;writer&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;write_u32&lt;/span&gt;::&lt;span class="o"&gt;&amp;lt;&lt;/span&gt;&lt;span class="n"&gt;NativeEndian&lt;/span&gt;&lt;span class="o"&gt;&amp;gt;&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;                    &lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="mh"&gt;0xFF&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;&amp;lt;&amp;lt;&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="mi"&gt;24&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;+&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;r&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;&amp;lt;&amp;lt;&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="mi"&gt;16&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;+&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;g&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;&amp;lt;&amp;lt;&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="mi"&gt;8&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;+&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;b&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;                &lt;/span&gt;&lt;span class="p"&gt;);&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="p"&gt;}&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="p"&gt;}&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="k"&gt;else&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="c1"&gt;// We do not have any image to draw, so we draw black contents&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="k"&gt;for&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;_&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="k"&gt;in&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="o"&gt;..&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;buf_x&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;*&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;buf_y&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;                &lt;/span&gt;&lt;span class="kd"&gt;let&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;_&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;writer&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;write_u32&lt;/span&gt;::&lt;span class="o"&gt;&amp;lt;&lt;/span&gt;&lt;span class="n"&gt;NativeEndian&lt;/span&gt;&lt;span class="o"&gt;&amp;gt;&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="mh"&gt;0xFF000000&lt;/span&gt;&lt;span class="p"&gt;);&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="p"&gt;}&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="p"&gt;}&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="c1"&gt;// Don&amp;#39;t forget to flush the writer, to make sure all the contents are&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="c1"&gt;// indeed written to the file.&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="kd"&gt;let&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;_&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;writer&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;flush&lt;/span&gt;&lt;span class="p"&gt;();&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="p"&gt;}&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// Now, we create a buffer to the memory pool pointing to the contents&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// we just wrote&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="k"&gt;return&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;pool&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;buffer&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt;                       &lt;/span&gt;&lt;span class="c1"&gt;// initial offset of the buffer in the pool&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="n"&gt;buf_x&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="k"&gt;as&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="kt"&gt;i32&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="c1"&gt;// width of the buffer, in pixels&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="n"&gt;buf_y&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="k"&gt;as&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="kt"&gt;i32&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="c1"&gt;// height of the buffer, in pixels&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="mi"&gt;4&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;*&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;buf_x&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="k"&gt;as&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="kt"&gt;i32&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="c1"&gt;// stride: number of bytes between the start of two&lt;/span&gt;
+&lt;span class="w"&gt;                                 &lt;/span&gt;&lt;span class="c1"&gt;//   consecutive rows of pixels&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="n"&gt;wl_shm&lt;/span&gt;::&lt;span class="n"&gt;Format&lt;/span&gt;::&lt;span class="n"&gt;Argb8888&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="c1"&gt;// the pixel format we wrote in&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="p"&gt;}&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+
+&lt;p&gt;We now have all the parts in place to start running our app, time to write the event loop.&lt;/p&gt;
+&lt;h3&gt;The event loop&lt;/h3&gt;
+&lt;p&gt;As our app has very little room for user input (we handle nothing except the window being
+resized), our event loop will also be quite simple. It needs to:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;check the received events to know if we should quit or redraw&lt;/li&gt;
+&lt;li&gt;redraw and/or refresh the frame if necessary&lt;/li&gt;
+&lt;li&gt;call the methods of the Wayland event queue to ensure proper processing of the messages&lt;/li&gt;
+&lt;/ul&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="k"&gt;fn&lt;/span&gt; &lt;span class="nf"&gt;main&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// ...&lt;/span&gt;
+
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// First, we initialize a few boolean flags that we&amp;#39;ll use to track our state:&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// - the window needs to be redrawn&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="kd"&gt;let&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="k"&gt;mut&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;need_redraw&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="kc"&gt;false&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// - the frame needs to be refreshed&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="kd"&gt;let&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="k"&gt;mut&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;need_refresh&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="kc"&gt;false&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// - have we done the original bootstrap? Depending on the underlying shell&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;//   protocol, we may need to wait until we receive a first configure event&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;//   before drawing our window. This flag checks if this is done.&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="kd"&gt;let&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="k"&gt;mut&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;bootstrapped&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="kc"&gt;false&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// - number of currently free memory pool, which will be shared by the buffer&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;//   implementations&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="kd"&gt;let&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;free_pools&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;Rc&lt;/span&gt;::&lt;span class="n"&gt;new&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;Cell&lt;/span&gt;::&lt;span class="n"&gt;new&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="mi"&gt;2&lt;/span&gt;&lt;span class="k"&gt;u32&lt;/span&gt;&lt;span class="p"&gt;));&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// - are we currently in the process of being resized? (to draw the image or&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;//   black content)&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="kd"&gt;let&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="k"&gt;mut&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;resizing&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="kc"&gt;false&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// - a QueueToken, we&amp;#39;ll need it to implement the buffers&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="kd"&gt;let&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;token&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;event_queue&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;get_token&lt;/span&gt;&lt;span class="p"&gt;();&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// - the size of our contents&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="kd"&gt;let&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="k"&gt;mut&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;dimensions&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;image&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;dimensions&lt;/span&gt;&lt;span class="p"&gt;();&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// if our shell does not need to wait for a configure event, we draw right away.&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;//&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// Note that this is only the case for the old wl_shell protocol, which is now&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// deprecated. This code is only for compatibility with old servers that do not&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// support the new standard xdg_shell protocol.&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;//&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// But if we have made a fallback to wl_shell, we need to draw right away because we&amp;#39;ll&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// never receive a configure event if we don&amp;#39;t draw something...&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="k"&gt;if&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;!&lt;/span&gt;&lt;span class="n"&gt;env&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;shell&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;needs_configure&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="n"&gt;need_redraw&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="kc"&gt;true&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="n"&gt;bootstrapped&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="kc"&gt;true&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="p"&gt;}&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// We can now actually enter the event loop!&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="k"&gt;loop&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="c1"&gt;// First, check if any pending action was received by the&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="c1"&gt;// Window implementation:&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="k"&gt;match&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;next_action&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;lock&lt;/span&gt;&lt;span class="p"&gt;().&lt;/span&gt;&lt;span class="n"&gt;unwrap&lt;/span&gt;&lt;span class="p"&gt;().&lt;/span&gt;&lt;span class="n"&gt;take&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="c1"&gt;// We received a Close event, just break from the loop&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="c1"&gt;// and let the app quit&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="nb"&gt;Some&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;WEvent&lt;/span&gt;::&lt;span class="n"&gt;Close&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&amp;gt;&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="k"&gt;break&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="c1"&gt;// We received a Refresh event, store that we need to refresh the&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="c1"&gt;// frame&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="nb"&gt;Some&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;WEvent&lt;/span&gt;::&lt;span class="n"&gt;Refresh&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&amp;gt;&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;                &lt;/span&gt;&lt;span class="n"&gt;need_refresh&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="kc"&gt;true&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="p"&gt;}&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="c1"&gt;// We received a configure event, our action depends on its&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="c1"&gt;// contents&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="nb"&gt;Some&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;WEvent&lt;/span&gt;::&lt;span class="n"&gt;Configure&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;new_size&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;states&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;})&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&amp;gt;&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;                &lt;/span&gt;&lt;span class="c1"&gt;// the configure event contains a suggested size,&lt;/span&gt;
+&lt;span class="w"&gt;                &lt;/span&gt;&lt;span class="c1"&gt;// if it is different from our current size, we need to&lt;/span&gt;
+&lt;span class="w"&gt;                &lt;/span&gt;&lt;span class="c1"&gt;// update it and redraw&lt;/span&gt;
+&lt;span class="w"&gt;                &lt;/span&gt;&lt;span class="k"&gt;if&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="kd"&gt;let&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nb"&gt;Some&lt;/span&gt;&lt;span class="p"&gt;((&lt;/span&gt;&lt;span class="n"&gt;w&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;h&lt;/span&gt;&lt;span class="p"&gt;))&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;new_size&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;                    &lt;/span&gt;&lt;span class="k"&gt;if&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;dimensions&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;!=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;w&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;h&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;                        &lt;/span&gt;&lt;span class="n"&gt;dimensions&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;w&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;h&lt;/span&gt;&lt;span class="p"&gt;);&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;                        &lt;/span&gt;&lt;span class="n"&gt;need_redraw&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="kc"&gt;true&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;                    &lt;/span&gt;&lt;span class="p"&gt;}&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;                &lt;/span&gt;&lt;span class="p"&gt;}&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;                &lt;/span&gt;&lt;span class="c1"&gt;// Are we currently resizing ?&lt;/span&gt;
+&lt;span class="w"&gt;                &lt;/span&gt;&lt;span class="c1"&gt;// We check if a resize operation just started or stopped,&lt;/span&gt;
+&lt;span class="w"&gt;                &lt;/span&gt;&lt;span class="c1"&gt;// because in this case we&amp;#39;ll swap between drawing black&lt;/span&gt;
+&lt;span class="w"&gt;                &lt;/span&gt;&lt;span class="c1"&gt;// and drawing the window (or the reverse), and thus we need to&lt;/span&gt;
+&lt;span class="w"&gt;                &lt;/span&gt;&lt;span class="c1"&gt;// redraw&lt;/span&gt;
+&lt;span class="w"&gt;                &lt;/span&gt;&lt;span class="kd"&gt;let&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;new_resizing&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;states&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;contains&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="o"&gt;&amp;amp;&lt;/span&gt;&lt;span class="n"&gt;State&lt;/span&gt;::&lt;span class="n"&gt;Resizing&lt;/span&gt;&lt;span class="p"&gt;);&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;                &lt;/span&gt;&lt;span class="k"&gt;if&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;new_resizing&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;!=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;resizing&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;                    &lt;/span&gt;&lt;span class="n"&gt;need_redraw&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="kc"&gt;true&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;                &lt;/span&gt;&lt;span class="p"&gt;}&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;                &lt;/span&gt;&lt;span class="n"&gt;resizing&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;new_resizing&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+
+&lt;span class="w"&gt;                &lt;/span&gt;&lt;span class="c1"&gt;// If we have not bootstrapped yet, this is the first configure&lt;/span&gt;
+&lt;span class="w"&gt;                &lt;/span&gt;&lt;span class="c1"&gt;// event, time to draw for the first time.&lt;/span&gt;
+&lt;span class="w"&gt;                &lt;/span&gt;&lt;span class="k"&gt;if&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;!&lt;/span&gt;&lt;span class="n"&gt;bootstrapped&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;                    &lt;/span&gt;&lt;span class="n"&gt;bootstrapped&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="kc"&gt;true&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;                    &lt;/span&gt;&lt;span class="n"&gt;need_redraw&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="kc"&gt;true&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;                &lt;/span&gt;&lt;span class="p"&gt;}&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="p"&gt;}&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="c1"&gt;// No event, nothing new to do.&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="nb"&gt;None&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&amp;gt;&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{}&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="p"&gt;}&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="k"&gt;if&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;need_redraw&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="c1"&gt;// We need to redraw, but can only do it if at least one of the&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="c1"&gt;// memory pools is not currently used by the server. If both are&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="c1"&gt;// used, we&amp;#39;ll keep the `need_redraw` flag to `true` and try again&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="c1"&gt;// at next iteration of the loop.&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="k"&gt;if&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;free_pools&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;get&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;&amp;gt;&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;                &lt;/span&gt;&lt;span class="c1"&gt;// Draw the contents in the pool and retrieve the buffer&lt;/span&gt;
+&lt;span class="w"&gt;                &lt;/span&gt;&lt;span class="kd"&gt;let&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;new_buffer&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;draw&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;                    &lt;/span&gt;&lt;span class="n"&gt;pools&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;pool&lt;/span&gt;&lt;span class="p"&gt;(),&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;                    &lt;/span&gt;&lt;span class="k"&gt;if&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;resizing&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nb"&gt;None&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;}&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="k"&gt;else&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="nb"&gt;Some&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="o"&gt;&amp;amp;&lt;/span&gt;&lt;span class="n"&gt;image&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;},&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;                    &lt;/span&gt;&lt;span class="n"&gt;dimensions&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;                &lt;/span&gt;&lt;span class="p"&gt;);&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;                &lt;/span&gt;&lt;span class="c1"&gt;// We implement this buffer to check when the server sends us the Release&lt;/span&gt;
+&lt;span class="w"&gt;                &lt;/span&gt;&lt;span class="c1"&gt;// event.&lt;/span&gt;
+&lt;span class="w"&gt;                &lt;/span&gt;&lt;span class="c1"&gt;// This method is unsafe for thread-safety reasons, as the callback we provide&lt;/span&gt;
+&lt;span class="w"&gt;                &lt;/span&gt;&lt;span class="c1"&gt;// is not Send/Synd (it uses an Rc&amp;lt;Cell&amp;lt;&amp;gt;&amp;gt;). But our app is not multi-threaded&lt;/span&gt;
+&lt;span class="w"&gt;                &lt;/span&gt;&lt;span class="c1"&gt;// here, so this is fine. =)&lt;/span&gt;
+&lt;span class="w"&gt;                &lt;/span&gt;&lt;span class="kd"&gt;let&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;buffer&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="k"&gt;unsafe&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;new_buffer&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;implement_nonsend&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;                    &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;                        &lt;/span&gt;&lt;span class="c1"&gt;// get a handle to the free pools counter, for the closure&lt;/span&gt;
+&lt;span class="w"&gt;                        &lt;/span&gt;&lt;span class="kd"&gt;let&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;notify&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;free_pools&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;clone&lt;/span&gt;&lt;span class="p"&gt;();&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;                        &lt;/span&gt;&lt;span class="c1"&gt;// The closure that will be called when the Release event is&lt;/span&gt;
+&lt;span class="w"&gt;                        &lt;/span&gt;&lt;span class="c1"&gt;// received&lt;/span&gt;
+&lt;span class="w"&gt;                        &lt;/span&gt;&lt;span class="c1"&gt;// - wl_buffer::Event is an enum with a single variant&lt;/span&gt;
+&lt;span class="w"&gt;                        &lt;/span&gt;&lt;span class="c1"&gt;// - we need to annotate the buffer argument because rust&amp;#39;s type&lt;/span&gt;
+&lt;span class="w"&gt;                        &lt;/span&gt;&lt;span class="c1"&gt;//   inference is unfortunately not good enough to find it alone&lt;/span&gt;
+&lt;span class="w"&gt;                        &lt;/span&gt;&lt;span class="k"&gt;move&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;|&lt;/span&gt;&lt;span class="n"&gt;wl_buffer&lt;/span&gt;::&lt;span class="n"&gt;Event&lt;/span&gt;::&lt;span class="n"&gt;Release&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;buffer&lt;/span&gt;: &lt;span class="nc"&gt;Proxy&lt;/span&gt;&lt;span class="o"&gt;&amp;lt;&lt;/span&gt;&lt;span class="n"&gt;wl_buffer&lt;/span&gt;::&lt;span class="n"&gt;WlBuffer&lt;/span&gt;&lt;span class="o"&gt;&amp;gt;|&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;                            &lt;/span&gt;&lt;span class="c1"&gt;// This buffer has been released by the server. Increment the&lt;/span&gt;
+&lt;span class="w"&gt;                            &lt;/span&gt;&lt;span class="c1"&gt;// count of free pools...&lt;/span&gt;
+&lt;span class="w"&gt;                            &lt;/span&gt;&lt;span class="n"&gt;notify&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;set&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;notify&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;get&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;&lt;span class="o"&gt;+&lt;/span&gt;&lt;span class="mi"&gt;1&lt;/span&gt;&lt;span class="p"&gt;);&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;                            &lt;/span&gt;&lt;span class="c1"&gt;// ... and destroy the buffer&lt;/span&gt;
+&lt;span class="w"&gt;                            &lt;/span&gt;&lt;span class="n"&gt;buffer&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;destroy&lt;/span&gt;&lt;span class="p"&gt;();&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;                        &lt;/span&gt;&lt;span class="p"&gt;}&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;                    &lt;/span&gt;&lt;span class="p"&gt;},&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;                    &lt;/span&gt;&lt;span class="o"&gt;&amp;amp;&lt;/span&gt;&lt;span class="n"&gt;token&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;                &lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;};&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;                &lt;/span&gt;&lt;span class="c1"&gt;// Now, swap the MemPools, so next time we&amp;#39;ll draw on the other.&lt;/span&gt;
+&lt;span class="w"&gt;                &lt;/span&gt;&lt;span class="c1"&gt;// This is double-buffering.&lt;/span&gt;
+&lt;span class="w"&gt;                &lt;/span&gt;&lt;span class="n"&gt;pools&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;swap&lt;/span&gt;&lt;span class="p"&gt;();&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;                &lt;/span&gt;&lt;span class="c1"&gt;// Register that one more pool is in use.&lt;/span&gt;
+&lt;span class="w"&gt;                &lt;/span&gt;&lt;span class="n"&gt;free_pools&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;set&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;free_pools&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;get&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;&lt;span class="o"&gt;-&lt;/span&gt;&lt;span class="mi"&gt;1&lt;/span&gt;&lt;span class="p"&gt;);&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;                &lt;/span&gt;&lt;span class="c1"&gt;// Attach this new buffer to our surface.&lt;/span&gt;
+&lt;span class="w"&gt;                &lt;/span&gt;&lt;span class="n"&gt;window&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;surface&lt;/span&gt;&lt;span class="p"&gt;().&lt;/span&gt;&lt;span class="n"&gt;attach&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="nb"&gt;Some&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="o"&gt;&amp;amp;&lt;/span&gt;&lt;span class="n"&gt;buffer&lt;/span&gt;&lt;span class="p"&gt;),&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="p"&gt;);&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;                &lt;/span&gt;&lt;span class="c1"&gt;// We need to tell the server which parts of the surface have changed,&lt;/span&gt;
+&lt;span class="w"&gt;                &lt;/span&gt;&lt;span class="c1"&gt;// it uses it to only reload/redraw relevant parts for performance.&lt;/span&gt;
+&lt;span class="w"&gt;                &lt;/span&gt;&lt;span class="c1"&gt;// In our case everything has likely changed so we damage everything.&lt;/span&gt;
+&lt;span class="w"&gt;                &lt;/span&gt;&lt;span class="c1"&gt;//&lt;/span&gt;
+&lt;span class="w"&gt;                &lt;/span&gt;&lt;span class="c1"&gt;// Two ways are possible for notifying this damage:&lt;/span&gt;
+&lt;span class="w"&gt;                &lt;/span&gt;&lt;span class="k"&gt;if&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;window&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;surface&lt;/span&gt;&lt;span class="p"&gt;().&lt;/span&gt;&lt;span class="n"&gt;version&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;&amp;gt;=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="mi"&gt;4&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;                    &lt;/span&gt;&lt;span class="c1"&gt;// If our server is recent enough and supports at least version 4 of the&lt;/span&gt;
+&lt;span class="w"&gt;                    &lt;/span&gt;&lt;span class="c1"&gt;// wl_surface interface, we can specify the damage in buffer coordinates.&lt;/span&gt;
+&lt;span class="w"&gt;                    &lt;/span&gt;&lt;span class="c1"&gt;// This is obviously the best, so we do that if possible.&lt;/span&gt;
+&lt;span class="w"&gt;                    &lt;/span&gt;&lt;span class="n"&gt;window&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;surface&lt;/span&gt;&lt;span class="p"&gt;().&lt;/span&gt;&lt;span class="n"&gt;damage_buffer&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;dimensions&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="k"&gt;as&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="kt"&gt;i32&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;dimensions&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="mi"&gt;1&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="k"&gt;as&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="kt"&gt;i32&lt;/span&gt;&lt;span class="p"&gt;);&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;                &lt;/span&gt;&lt;span class="p"&gt;}&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="k"&gt;else&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;                    &lt;/span&gt;&lt;span class="c1"&gt;// Otherwise, we fallback to compatilibity mode. Here we specify damage&lt;/span&gt;
+&lt;span class="w"&gt;                    &lt;/span&gt;&lt;span class="c1"&gt;// in surface coordinates, which would have been different if we had drawn&lt;/span&gt;
+&lt;span class="w"&gt;                    &lt;/span&gt;&lt;span class="c1"&gt;// our buffer at HiDPI resolution. We didn&amp;#39;t though, so it is ok.&lt;/span&gt;
+&lt;span class="w"&gt;                    &lt;/span&gt;&lt;span class="n"&gt;window&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;surface&lt;/span&gt;&lt;span class="p"&gt;().&lt;/span&gt;&lt;span class="n"&gt;damage&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;dimensions&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="k"&gt;as&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="kt"&gt;i32&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;dimensions&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="mi"&gt;1&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="k"&gt;as&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="kt"&gt;i32&lt;/span&gt;&lt;span class="p"&gt;);&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;                &lt;/span&gt;&lt;span class="p"&gt;}&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;                &lt;/span&gt;&lt;span class="c1"&gt;// We resize our frame, so that it is drawn at the right size by SCTK&lt;/span&gt;
+&lt;span class="w"&gt;                &lt;/span&gt;&lt;span class="n"&gt;window&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;resize&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;dimensions&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="mi"&gt;0&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;dimensions&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="mi"&gt;1&lt;/span&gt;&lt;span class="p"&gt;);&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;                &lt;/span&gt;&lt;span class="c1"&gt;// We also refresh it, so that SCTK actually draws it with the new size&lt;/span&gt;
+&lt;span class="w"&gt;                &lt;/span&gt;&lt;span class="n"&gt;window&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;refresh&lt;/span&gt;&lt;span class="p"&gt;();&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;                &lt;/span&gt;&lt;span class="c1"&gt;// We commit our drawing surface, so that the server atomically applies&lt;/span&gt;
+&lt;span class="w"&gt;                &lt;/span&gt;&lt;span class="c1"&gt;// all the changes we previously did.&lt;/span&gt;
+&lt;span class="w"&gt;                &lt;/span&gt;&lt;span class="n"&gt;window&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;surface&lt;/span&gt;&lt;span class="p"&gt;().&lt;/span&gt;&lt;span class="n"&gt;commit&lt;/span&gt;&lt;span class="p"&gt;();&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;                &lt;/span&gt;&lt;span class="c1"&gt;// We don&amp;#39;t need to redraw or refresh anymore =)&lt;/span&gt;
+&lt;span class="w"&gt;                &lt;/span&gt;&lt;span class="n"&gt;need_redraw&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="kc"&gt;false&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;                &lt;/span&gt;&lt;span class="n"&gt;need_refresh&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="kc"&gt;false&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="p"&gt;}&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="p"&gt;}&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="k"&gt;else&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="k"&gt;if&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;need_refresh&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="c1"&gt;// If we don&amp;#39;t need to redraw but only to refresh, do it&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="n"&gt;window&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;refresh&lt;/span&gt;&lt;span class="p"&gt;();&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="c1"&gt;// We still need to commit our surface, as the decorations are drawn as&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="c1"&gt;// subsurfaces of it.&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="n"&gt;window&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;surface&lt;/span&gt;&lt;span class="p"&gt;().&lt;/span&gt;&lt;span class="n"&gt;commit&lt;/span&gt;&lt;span class="p"&gt;();&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="n"&gt;need_refresh&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="kc"&gt;false&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="p"&gt;}&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="c1"&gt;// These last two calls are necessary for the processing of Wayland messages:&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="c1"&gt;// - first, flush all our requests to the server on the unix socket&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="n"&gt;display&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;flush&lt;/span&gt;&lt;span class="p"&gt;().&lt;/span&gt;&lt;span class="n"&gt;unwrap&lt;/span&gt;&lt;span class="p"&gt;();&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="c1"&gt;// - then, retrieve all the incoming messages&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="c1"&gt;//   this method blocks until a message arrives from the server, and will process&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="c1"&gt;//   all events by calling the implementation of the target object or each,&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="c1"&gt;//   and only return once all pending messages have been processed.&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="n"&gt;event_queue&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;dispatch&lt;/span&gt;&lt;span class="p"&gt;().&lt;/span&gt;&lt;span class="n"&gt;unwrap&lt;/span&gt;&lt;span class="p"&gt;();&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="p"&gt;}&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="p"&gt;}&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+
+&lt;p&gt;Here we are done with our app. You can find the full source of this program
+&lt;a href="https://github.com/Smithay/client-toolkit/blob/master/examples/image_viewer.rs"&gt;in the github repo of SCTK&lt;/a&gt;
+and try to run it in a Wayland compositor.&lt;/p&gt;
+&lt;p&gt;Thanks for following me to the end, and I hope I managed to give you a good general
+idea of how Wayland works, and how SCTK can be used to make Wayland native apps. =)&lt;/p&gt;</content><category term="Tutorials"></category></entry><entry><title>Wayland-rs 0.20 &amp; Smithay's Client Toolkit</title><link href="https://smithay.github.io/wayland-rs-v-0-20.html" rel="alternate"></link><published>2018-04-26T18:00:00+02:00</published><updated>2018-04-26T18:00:00+02:00</updated><author><name>Victor Berger</name></author><id>tag:smithay.github.io,2018-04-26:/wayland-rs-v-0-20.html</id><summary type="html">&lt;p&gt;Status point of the project: large rework of the wayland bindings in version 0.20, and announcement of Smithay's Client Toolkit.&lt;/p&gt;</summary><content type="html">&lt;p&gt;This article marks the end of a large rework of the
+&lt;a href="https://github.com/smithay/wayland-rs/"&gt;wayland-rs&lt;/a&gt; group of crates. For context, this
+repository hosts a few crates offering bindings to the wayland protocol, both client-side
+via &lt;a href="https://docs.rs/wayland-client/"&gt;wayland-client&lt;/a&gt; and server-side via
+&lt;a href="https://docs.rs/wayland-server/"&gt;wayland-server&lt;/a&gt;.&lt;/p&gt;
+&lt;p&gt;This is a major step compared to previous version, 0.14, and the large gap in version numbers
+is meant to reflect it. The whole API has been completely overhauled using the insights we
+got from working on &lt;a href="https://github.com/smithay/smithay"&gt;smithay&lt;/a&gt;, using &lt;code&gt;wayland-server&lt;/code&gt;.&lt;/p&gt;
+&lt;h2&gt;Summary of the changes&lt;/h2&gt;
+&lt;p&gt;If I had to describe this refactor in a single sentence, I'd say: "don't be afraid to trade
+small runtime costs for large ergonomic improvements". The previous design of the libraries
+tried to remain as low-overhead possible as possible on the wayland C libs. This caused an
+API that was quite convoluted to try to
+&lt;a href="https://docs.rs/token_store/"&gt;make safe sharing of mutable state&lt;/a&gt;, and at 
+some points not very different from manually re-implementing a v-table. Other issues more
+specific to smithay resulted in a large accumulation of template parameters on types that need
+to be named and stored. All these issues made the API quite tedious to use overall.&lt;/p&gt;
+&lt;p&gt;As a result, for this new version I decided to embrace trait objects, &lt;code&gt;Rc&lt;/code&gt;, and &lt;code&gt;Arc&lt;/code&gt;.
+Additionally, the API redesign was made focusing on &lt;em&gt;the spirit&lt;/em&gt; of the wayland protocol,
+rather than trying to stay close to &lt;em&gt;the C API&lt;/em&gt;.&lt;/p&gt;
+&lt;p&gt;To list a few clear gains from this rework:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;The scanner (crate that generate API code from the XML protocol files) almost no longer
+  needs to generate &lt;code&gt;unsafe { }&lt;/code&gt; blocks in its generated code&lt;/li&gt;
+&lt;li&gt;The long standing issue of handling both &lt;code&gt;Send&lt;/code&gt; and non-&lt;code&gt;Send&lt;/code&gt; shared state is finally
+  solved (see next section)&lt;/li&gt;
+&lt;li&gt;The ergonomics and flexibility of specifying callbacks for wayland events has been greatly
+  improved&lt;/li&gt;
+&lt;li&gt;Overall better interaction with objects from the C world, if wayland-rs is used in
+  combination with C libraries&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Another interesting point is that, as this rework is much less centered around the C API,
+it allowed me to keep open the door for a full-rust implementation of the protocol. Thus I
+designed the libraries around a cargo feature &lt;code&gt;native_lib&lt;/code&gt;, controlling whether the native
+C library should be used or not. Currently, the libraries are &lt;em&gt;not&lt;/em&gt; usable without this
+cargo feature enabled (most of the code is &lt;code&gt;unimplemented!()&lt;/code&gt;), but it should allow for
+implementing this afterwards, without changing public API at all. Meaning that for programs
+that don't specifically need the &lt;code&gt;native_lib&lt;/code&gt; feature (that will still be required for
+interacting with C libraries for example), enabling or disabling this feature would be
+transparent.&lt;/p&gt;
+&lt;p&gt;Note however that I currently have no plans about &lt;em&gt;when&lt;/em&gt; I'll do that, mostly because
+quite a lot of things are higher on my todo-list. But if this question interests you,
+don't hesitate to &lt;a href="/pages/contact.html"&gt;get in touch&lt;/a&gt;, I'd be happy to work on it sooner
+if it means not doing it alone. ;)&lt;/p&gt;
+&lt;h2&gt;The new callback specification&lt;/h2&gt;
+&lt;p&gt;The most major API change is on the way callbacks are handled. Previously you had to provide
+a set of freestanding functions that would be given access to some state data for each event,
+with the difficulties of sharing state between an undeterminate set of callbacks a priori...&lt;/p&gt;
+&lt;p&gt;Now each time a new protocol object is created, you'll receive it as a &lt;code&gt;NewProxy&lt;/code&gt;/&lt;code&gt;NewResource&lt;/code&gt;
+object (depending on whether you are client side or server side), and will have to implement
+it before accessing the real &lt;code&gt;Proxy&lt;/code&gt;/&lt;code&gt;Resource&lt;/code&gt; and being able to use it. Implementing an
+object consists of providing a type implementing the appropriate &lt;code&gt;Implementation&amp;lt;Meta, Msg&amp;gt;&lt;/code&gt;
+trait.&lt;/p&gt;
+&lt;p&gt;This trait has a very simple definition:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="k"&gt;pub&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="k"&gt;trait&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;Implementation&lt;/span&gt;&lt;span class="o"&gt;&amp;lt;&lt;/span&gt;&lt;span class="n"&gt;Meta&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;Msg&lt;/span&gt;&lt;span class="o"&gt;&amp;gt;&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="k"&gt;fn&lt;/span&gt; &lt;span class="nf"&gt;receive&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="o"&gt;&amp;amp;&lt;/span&gt;&lt;span class="k"&gt;mut&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;msg&lt;/span&gt;: &lt;span class="nc"&gt;Msg&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;meta&lt;/span&gt;: &lt;span class="nc"&gt;Meta&lt;/span&gt;&lt;span class="p"&gt;);&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="p"&gt;}&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+
+&lt;p&gt;Here the &lt;code&gt;Meta&lt;/code&gt; type parameter represent some metadata associated with the message you
+receive (often a &lt;code&gt;Proxy&lt;/code&gt;/&lt;code&gt;Resource&lt;/code&gt; handle to the wayland object receiving the message),
+while &lt;code&gt;Msg&lt;/code&gt; is a type representing the message itself (often an enum of the possible wayland
+messages this object can receive).&lt;/p&gt;
+&lt;p&gt;The convenience is that &lt;code&gt;Implementation&amp;lt;Meta, Msg&amp;gt;&lt;/code&gt; is automatically implemented for all
+type that implement &lt;code&gt;FnMut(Msg, Meta)&lt;/code&gt;. As such, you can easily provide closures as
+implementations, with all the ergonomics of capturing values and code terseness that
+implies. The only catch being that the implementations must be &lt;code&gt;'static&lt;/code&gt;, so you'll need
+to rely on &lt;code&gt;Arc&lt;/code&gt; or &lt;code&gt;Rc&lt;/code&gt; to share data. The runtime cost implied should be negligible however,
+the wayland protocol part should hardly be a bottleneck for any application.&lt;/p&gt;
+&lt;p&gt;There are also two ways to implement an object, the default one requiring the 
+implementation type to be &lt;code&gt;Send&lt;/code&gt;, and a secondary one that relaxes this requirement provided you
+provide a token that proves you are doing it from the same thread as the one on which the
+implementation will be invoked.&lt;/p&gt;
+&lt;h2&gt;Smithay's Client Toolkit&lt;/h2&gt;
+&lt;p&gt;I also took the occasion of this large API rework to fuse
+&lt;a href="https://github.com/smithay/wayland-kbd"&gt;wayland-kbd&lt;/a&gt; and
+&lt;a href="https://github.com/smithay/wayland-window"&gt;wayland-window&lt;/a&gt; into a single crate named
+&lt;a href="https://github.com/smithay/client-toolkit"&gt;smithay-client-toolkit&lt;/a&gt;, which will be some
+kind of an equivalent of &lt;a href="https://github.com/smithay/smithay"&gt;smithay&lt;/a&gt;, but for client
+applications. Given the scope of what is possible, it'll clearly remain much simpler than
+smithay itself, as it only abstracts the wayland protocol, and nothing like all of
+smithay's backends.&lt;/p&gt;
+&lt;p&gt;Currently, it only provides some barebones functionalities, but there is still a lot
+of room in this toolkit to grow if you want to get involved.&lt;/p&gt;
+&lt;p&gt;As an example, a minimal client could be created like this:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="k"&gt;extern&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="k"&gt;crate&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;smithay_client_toolkit&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="k"&gt;as&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;sctk&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+
+&lt;span class="k"&gt;use&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;sctk&lt;/span&gt;::&lt;span class="n"&gt;Environment&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="k"&gt;use&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;sctk&lt;/span&gt;::&lt;span class="n"&gt;window&lt;/span&gt;::&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="n"&gt;BasicFrame&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;Window&lt;/span&gt;&lt;span class="p"&gt;};&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+
+&lt;span class="c1"&gt;// wayland-client is re-exported in the client toolkit, for convenience&lt;/span&gt;
+&lt;span class="k"&gt;use&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;sctk&lt;/span&gt;::&lt;span class="n"&gt;reexports&lt;/span&gt;::&lt;span class="n"&gt;client&lt;/span&gt;::&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="n"&gt;Display&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;Proxy&lt;/span&gt;&lt;span class="p"&gt;};&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="k"&gt;use&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;sctk&lt;/span&gt;::&lt;span class="n"&gt;reexports&lt;/span&gt;::&lt;span class="n"&gt;client&lt;/span&gt;::&lt;span class="n"&gt;protocol&lt;/span&gt;::&lt;span class="n"&gt;wl_display&lt;/span&gt;::&lt;span class="n"&gt;RequestsTrait&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="k"&gt;as&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;DisplayRequests&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="k"&gt;use&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;sctk&lt;/span&gt;::&lt;span class="n"&gt;reexports&lt;/span&gt;::&lt;span class="n"&gt;client&lt;/span&gt;::&lt;span class="n"&gt;protocol&lt;/span&gt;::&lt;span class="n"&gt;wl_compositor&lt;/span&gt;::&lt;span class="n"&gt;RequestsTrait&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="k"&gt;as&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;CompositorRequests&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+
+&lt;span class="k"&gt;fn&lt;/span&gt; &lt;span class="nf"&gt;main&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// Connect to a wayland server&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="kd"&gt;let&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;display&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="k"&gt;mut&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;event_queue&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;Display&lt;/span&gt;::&lt;span class="n"&gt;connect_to_env&lt;/span&gt;&lt;span class="p"&gt;().&lt;/span&gt;&lt;span class="n"&gt;unwrap&lt;/span&gt;&lt;span class="p"&gt;();&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// The Environment an abstraction that binds most of the classic globals&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// for you. Doing this manually is very boring and repetitive.&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="kd"&gt;let&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;env&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="n"&gt;Environment&lt;/span&gt;::&lt;span class="n"&gt;from_registry&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;display&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;get_registry&lt;/span&gt;&lt;span class="p"&gt;().&lt;/span&gt;&lt;span class="n"&gt;unwrap&lt;/span&gt;&lt;span class="p"&gt;(),&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;&amp;amp;&lt;/span&gt;&lt;span class="k"&gt;mut&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;event_queue&lt;/span&gt;&lt;span class="p"&gt;).&lt;/span&gt;&lt;span class="n"&gt;unwrap&lt;/span&gt;&lt;span class="p"&gt;();&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// Create a wl_surface, which is the canvas on which we can draw the&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// contents of our window&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="kd"&gt;let&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;surface&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;env&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;compositor&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;create_surface&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;unwrap&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;implement&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="o"&gt;|&lt;/span&gt;&lt;span class="n"&gt;_&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;_&lt;/span&gt;&lt;span class="o"&gt;|&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="cm"&gt;/* this is the surface implementation, this one ignores all events */&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="p"&gt;});&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// Now create a Window for this surface&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// The window abstracts all the protocol handling of the shell, and provides&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// a simplistic decoration for our window (as many wayland compositors require the&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// clients to draw their decorations themselves).&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// The type parameter (here `BasicFrame`) defines what kind of decorations are drawn,&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// and can be customized by implementing the appropriate trait.&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="kd"&gt;let&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="k"&gt;mut&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;window&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;Window&lt;/span&gt;::&lt;span class="o"&gt;&amp;lt;&lt;/span&gt;&lt;span class="n"&gt;BasicFrame&lt;/span&gt;&lt;span class="o"&gt;&amp;gt;&lt;/span&gt;::&lt;span class="n"&gt;init&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="n"&gt;surface&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="mi"&gt;640&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="mi"&gt;480&lt;/span&gt;&lt;span class="p"&gt;),&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="o"&gt;&amp;amp;&lt;/span&gt;&lt;span class="n"&gt;env&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;compositor&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="o"&gt;&amp;amp;&lt;/span&gt;&lt;span class="n"&gt;env&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;subcompositor&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="o"&gt;&amp;amp;&lt;/span&gt;&lt;span class="n"&gt;env&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;shm&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="o"&gt;&amp;amp;&lt;/span&gt;&lt;span class="n"&gt;env&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;shell&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="k"&gt;move&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;|&lt;/span&gt;&lt;span class="n"&gt;event&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;&lt;span class="o"&gt;|&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="cm"&gt;/* handle the window&amp;#39;s events */&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="p"&gt;},&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="p"&gt;).&lt;/span&gt;&lt;span class="n"&gt;expect&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="s"&gt;&amp;quot;Failed to create a window !&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;);&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// The main event loop&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="k"&gt;loop&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="c1"&gt;// flush our messages to the server&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="n"&gt;display&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;flush&lt;/span&gt;&lt;span class="p"&gt;().&lt;/span&gt;&lt;span class="n"&gt;unwrap&lt;/span&gt;&lt;span class="p"&gt;();&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="c1"&gt;// receive and process the messages it sends back&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="c1"&gt;// this is where all the appropriate implementations are called internally&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="n"&gt;event_queue&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;dispatch&lt;/span&gt;&lt;span class="p"&gt;().&lt;/span&gt;&lt;span class="n"&gt;unwrap&lt;/span&gt;&lt;span class="p"&gt;();&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="cm"&gt;/*&lt;/span&gt;
+&lt;span class="cm"&gt;          Do any other processing we need, including redrawing the surface if needed&lt;/span&gt;
+&lt;span class="cm"&gt;        */&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="p"&gt;}&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="p"&gt;}&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;</content><category term="Releases"></category></entry><entry><title>Version 0.1 of Smithay</title><link href="https://smithay.github.io/smithay-v-0-1.html" rel="alternate"></link><published>2017-10-05T17:00:00+02:00</published><updated>2017-10-05T17:00:00+02:00</updated><author><name>Victor Berger</name></author><id>tag:smithay.github.io,2017-10-05:/smithay-v-0-1.html</id><summary type="html">&lt;p&gt;Announcement of version 0.1 of smithay, and a general presentation of the project and its goals.&lt;/p&gt;</summary><content type="html">&lt;p&gt;A few days ago we released version 0.1 of the &lt;a href="https://crates.io/crates/smithay"&gt;smithay crate&lt;/a&gt;,
+its first release on crates.io. On this occasion, let me make a slightly detailed presentation of this
+wayland compositor library.&lt;/p&gt;
+&lt;p&gt;First of all, let me give some context of wayland, in order to show what problem smithay tries to solve.
+If you already know about this protocol, feel free to jump to next section.&lt;/p&gt;
+&lt;h2&gt;Wayland background&lt;/h2&gt;
+&lt;p&gt;The &lt;a href="https://wayland.freedesktop.org/"&gt;wayland protocol&lt;/a&gt; aims at replacing the X11 protocol as the standard
+communication mean between graphical client apps and the display server on linux. The rationale for this is
+that given how X11 is old, has accumulated a lot of debt over the years, and is full of security holes, it's
+better to just start over with a new protocol. The project has been going for a few years now and adoption
+is getting pretty good. Notably Gtk/Gnome and Qt/KDE are now almost fully compatible, and some linux
+distributions have started enabling it by default.&lt;/p&gt;
+&lt;p&gt;In a few points, here are the main difference between Wayland and X11:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Wayland is much smaller and barebones. We could push the analogy to the point of saying that Wayland
+  is to X11 what Vulkan is to OpenGL. For example, a Wayland client is expected to fully handle the
+  drawing of its content, and just hand a buffer to the server via shared memory, while the X11 protocol
+  embeds many drawing primitives (though many recent X11 apps already do it that way anyway).&lt;/li&gt;
+&lt;li&gt;Wayland puts a lot of focus on security and client isolation. A wayland client does now know if other
+  clients are running, let alone accessing their data while any X11 client can hijack the inputs of any
+  other, or read the contents of any window. This is typically the kind of things keyloggers do.&lt;/li&gt;
+&lt;li&gt;Wayland does not have a single implementation. KDE and Gnome both ship their own wayland server, and there
+  is the reference server Weston, as well a some others. X11 had its de-facto unique implementation Xorg,
+  and window managers connected to the server as privilegied clients. Wayland window managers &lt;em&gt;are&lt;/em&gt; the
+  servers.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;This last point is core to Smithay's use: writing a full wayland server is a lot of work. There is the
+need to handle all the clients protocol-wise, do all the job of a window manager, but also manage the
+low-level resources with the kernel, initialize the framebuffers, retrieve and process the raw inputs,
+do the actual drawing and compositing, draw and manage the whole desktop user interface and so forth…&lt;/p&gt;
+&lt;p&gt;As such, while big projects like Gnome or KDE can afford doing all this in a very personal and customized
+way, smaller wayland compositors have started to rely on compositor libraries that do part of this job
+for you. Examples are &lt;a href="https://github.com/wayland-project/weston"&gt;libweston&lt;/a&gt;,
+&lt;a href="https://github.com/swaywm/wlroots"&gt;wlroots&lt;/a&gt;, or the now mostly abandonned &lt;a href="https://github.com/Cloudef/wlc"&gt;WLC&lt;/a&gt;.&lt;/p&gt;
+&lt;p&gt;Smithay is a compositor library written in Rust.&lt;/p&gt;
+&lt;h2&gt;What's in this 0.1?&lt;/h2&gt;
+&lt;p&gt;This first releases brings the most basic building blocks necessary to build a compositor. Smithay
+is designed in a modular bottom-up fashion: we currently have several independant low-level modules,
+each managing a very specific part of what "being a wayland compositor" requires. Smithay's user can
+then use these modules and configure them as they please to set up their compositor.&lt;/p&gt;
+&lt;p&gt;We will consider integrating higher-level modules into Smithay in the future. They would be built on
+top of the low-level ones, but there is still much work to do with the low-level ones, and this
+takes priority!&lt;/p&gt;
+&lt;p&gt;Smithay modules are currently organized in two groups: backend modules and wayland modules.&lt;/p&gt;
+&lt;h4&gt;Backend modules&lt;/h4&gt;
+&lt;p&gt;The backend modules are here to ease integration with the operating system. They abstract away the
+setup of the framebuffers, initialization of an OpenGL context to draw on, and retrieval of user
+inputs. Currently two backends exist:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;The DRM + libinput backend, which allows to start a smithay-based compositor directly in a TTY,
+  like a regular graphical environment.&lt;/li&gt;
+&lt;li&gt;the winit backend, which allows to start a smithay-based compositor as a winit app (and as such
+  as an X11 or wayland client). Being able to launch the compositor as a client helps a lot with
+  the development and debugging.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h4&gt;Frontend modules&lt;/h4&gt;
+&lt;p&gt;The wayland modules take care of several aspects of the wayland protocol and manage the
+state of the wayland clients. Currently 3 main tasks are implemented:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Keeping track of shared memory buffers sent by the clients in the form of a shared memory map
+  (note: this does not handle opengl clients).&lt;/li&gt;
+&lt;li&gt;Keeping track of the client surfaces and their relations to each other. Wayland clients define their
+  window contents by creating one or more surfaces, positioning them relative to each other, and
+  attaching buffers to them.&lt;/li&gt;
+&lt;li&gt;Forwarding inputs to the clients selectively based on current pointer or keyboard focus.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;All this together already allows the handling of several type of clients. For example, it is possible to
+run &lt;code&gt;weston-terminal&lt;/code&gt; (a wayland terminal emulator provided by weston) in the smithay examples:&lt;/p&gt;
+&lt;p&gt;&lt;img alt="Smithay running weston-terminal" src="/images/smithay-0-1.png"&gt;&lt;/p&gt;
+&lt;p&gt;&lt;em&gt;The black borders are a graphical artefact from smithay's example, that we just haven't got around
+fixing yet.&lt;/em&gt;&lt;/p&gt;
+&lt;h2&gt;How can I run it?&lt;/h2&gt;
+&lt;p&gt;If you want to play around with smithay and see what it can do, check out the
+&lt;a href="https://github.com/Smithay/smithay/tree/master/examples"&gt;examples in the github repository&lt;/a&gt;. A lot
+of code is still needed for a compositor built on smithay to work, and there is not nearly enough
+space in this blog post to paste the code.&lt;/p&gt;
+&lt;p&gt;You can also check out &lt;a href="https://docs.rs/smithay"&gt;Smithay's documentation on docs.rs&lt;/a&gt;. The crate-level
+docs are minimalistic, but we try to expand on all the details in the documentation of the individual
+modules.&lt;/p&gt;
+&lt;h2&gt;What's next?&lt;/h2&gt;
+&lt;p&gt;For the next steps, we plan to keep working on the fundamentals. Some of the most important remaining features are:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Finish implementing the core wayland protocol (still missing: touch events, copy/paste, and a few other things)&lt;/li&gt;
+&lt;li&gt;Integrate more with the OS (udev, consolekit/logind) to allow starting proper graphical sessions&lt;/li&gt;
+&lt;li&gt;Implement support for OpenGL clients&lt;/li&gt;
+&lt;li&gt;Implement support fo Xwayland, the compatibility layer to run X11 apps in a wayland environment&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;If you are interested, your contributions would be very welcome! Most of the work on the backends don't
+require any wayland knowledge. We've also started to work on a &lt;a href="https://smithay.github.io/book/"&gt;smithay book&lt;/a&gt;.
+For now it only contains explanations of the wayland protocol itself, but we plan to incorporate detailed tutorials
+on how to create wayland client apps using the &lt;code&gt;wayland-client&lt;/code&gt; crate, and how to create wayland compositors using
+&lt;code&gt;wayland-server&lt;/code&gt; and &lt;code&gt;smithay&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;We have a matrix chatroom &lt;a href="https://matrix.to/#/#smithay:matrix.org"&gt;@smithay:matrix.org&lt;/a&gt;, which
+is also bridged to mozilla's IRC at &lt;em&gt;#smithay&lt;/em&gt; and to gitter at &lt;a href="https://gitter.im/smithay/Lobby"&gt;smithay/Lobby&lt;/a&gt;.
+Feel free to drop by!&lt;/p&gt;</content><category term="Releases"></category></entry></feed>

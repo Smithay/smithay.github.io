@@ -1,0 +1,500 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom"><title>Smithay project - Releases</title><link href="https://smithay.github.io/" rel="alternate"></link><link href="https://smithay.github.io/feeds/releases.atom.xml" rel="self"></link><id>https://smithay.github.io/</id><updated>2020-10-13T19:00:00+02:00</updated><subtitle>The rusty smithy for wayland compositors</subtitle><entry><title>Version 0.7 of calloop</title><link href="https://smithay.github.io/calloop-v-0-7.html" rel="alternate"></link><published>2020-10-13T19:00:00+02:00</published><updated>2020-10-13T19:00:00+02:00</updated><author><name>Victor Berger</name></author><id>tag:smithay.github.io,2020-10-13:/calloop-v-0-7.html</id><summary type="html">&lt;p&gt;Announcement of version 0.7 of calloop, and a presentation of the crate.&lt;/p&gt;</summary><content type="html">&lt;p&gt;We just released &lt;a href="https://github.com/Smithay/calloop/releases/tag/v0.7.0"&gt;version 0.7&lt;/a&gt; of &lt;a href="https://docs.rs/calloop"&gt;calloop&lt;/a&gt;, the callback-based event loop that backs &lt;a href="https://github.com/Smithay/smithay"&gt;Smithay&lt;/a&gt;
+and optionaly &lt;a href="https://github.com/Smithay/client-toolkit"&gt;SCTK&lt;/a&gt;. As the crate is now getting mature, it is time for a formal presentation!&lt;/p&gt;
+&lt;h2&gt;Callbacks, in Rust?&lt;/h2&gt;
+&lt;p&gt;It is commonly acknowledged that in Rust, callback-based designs induce a lot of friction, in
+particular regarding state sharing. Nobody wants to have &lt;code&gt;Rc&amp;lt;RefCell&amp;lt;_&amp;gt;&amp;gt;&lt;/code&gt; littered all around their
+codebase, and so naturally most of the ecosystem turned to async/await, a design much more natural
+given the constraints of the language.&lt;/p&gt;
+&lt;p&gt;However, not all usecases play well with async/await, notably cases were you are in a purely
+reactive context: waiting for events and quickly reacting to them. Indeed, why would you use
+async/await if you never need to &lt;code&gt;.await&lt;/code&gt; anything? This is for a large part our context of
+work in Smithay, and so we developed calloop.&lt;/p&gt;
+&lt;p&gt;Calloop is designed trying to ease the friction of using callbacks in Rust as much as possible.
+The central issue, state sharing, is managed though some global shared data. A mutable reference
+to some value of your choosing is passed down to all callbacks. As the whole event loop is
+single-threaded, this allows them access to your state without any synchronization or
+reference-counted pointers, as if they were all methods of the same object.&lt;/p&gt;
+&lt;p&gt;In a nutshell, calloop is mostly targeted at apps that spend a large portion of their time just
+waiting for something to happen, and need to quickly react to it as opposed to apps that need
+to manage numerous computations or sockets in parallel efficiently, which is the more common
+use of async/await. This processing can be more practical in GUI apps notably, in particular in
+X11 or Wayland contexts, where the communication with the display server is made over an Unix
+socket, which can be monitored by APIs like &lt;code&gt;epoll&lt;/code&gt; or &lt;code&gt;kqueue&lt;/code&gt;.&lt;/p&gt;
+&lt;h2&gt;How is it used?&lt;/h2&gt;
+&lt;p&gt;Calloop's core is the &lt;code&gt;EventLoop&lt;/code&gt; type. As you can tell by its name, it is the event loop. Once
+you've registered your event sources and their callbacks, you just call &lt;code&gt;EventLoop::run(...)&lt;/code&gt; and
+that method will block, running your event loop and dispatching the events appropriately. Setting
+up these callbacks is done though two main components: the &lt;code&gt;LoopHandle&lt;/code&gt; object, and the &lt;code&gt;EventSource&lt;/code&gt;
+trait.&lt;/p&gt;
+&lt;p&gt;The &lt;code&gt;LoopHandle&lt;/code&gt; is a handle to the &lt;code&gt;EventLoop&lt;/code&gt; (duh). This handle can be cloned and shared in
+different parts of your program. This handle is what is used to setup new callbacks, which can thus
+be done from mostly anywhere, even within a callback! The notable constraint to this is that the
+handle is not shareable between threads. Calloop is meant to run the event loop on a single thread.&lt;/p&gt;
+&lt;p&gt;The &lt;code&gt;EventSource&lt;/code&gt; trait is a generic interface for "something that can generate events". Anything
+implementing that trait can be associated to a callback in the &lt;code&gt;EventLoop&lt;/code&gt;. It will be monitored
+and the associated callback will be invoked every time the event source generates an event. This
+trait is meant to be composable: one can implement a high-level event source by wrapping a low-level
+one and further processing its event before passing them along.&lt;/p&gt;
+&lt;p&gt;To give you a feel of what it looks like, take a look at this example extracted from the documentation:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="k"&gt;use&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;calloop&lt;/span&gt;::&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="n"&gt;generic&lt;/span&gt;::&lt;span class="n"&gt;Generic&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;EventLoop&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;Interest&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;Mode&lt;/span&gt;&lt;span class="p"&gt;};&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+
+&lt;span class="k"&gt;use&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;std&lt;/span&gt;::&lt;span class="n"&gt;time&lt;/span&gt;::&lt;span class="n"&gt;Duration&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+
+&lt;span class="k"&gt;fn&lt;/span&gt; &lt;span class="nf"&gt;main&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// Create the event loop&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="kd"&gt;let&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="k"&gt;mut&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;event_loop&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;EventLoop&lt;/span&gt;::&lt;span class="n"&gt;try_new&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;                &lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;expect&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="s"&gt;&amp;quot;Failed to initialize the event loop!&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;);&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// Retrieve a handle. It is used to insert new sources into the event loop&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// It can be cloned, allowing you to insert sources from within callbacks&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="kd"&gt;let&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;handle&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;event_loop&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;handle&lt;/span&gt;&lt;span class="p"&gt;();&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// Inserting an event source takes this general form&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// it can also be done from within the callback of an other event source&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="n"&gt;handle&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;insert_source&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="c1"&gt;// a type implementing the EventSource trait&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="n"&gt;source&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="c1"&gt;// a callback that is invoked whenever this source generates an event&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="o"&gt;|&lt;/span&gt;&lt;span class="n"&gt;event&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;metadata&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;shared_data&lt;/span&gt;&lt;span class="o"&gt;|&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="c1"&gt;// This callback is given 3 values:&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="c1"&gt;// - the event generated by the source&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="c1"&gt;// - &amp;amp;mut access to some metadata, specific to the event source&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="c1"&gt;// - &amp;amp;mut access to the global shared data that was passed to EventLoop::dispatch&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="p"&gt;}&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="p"&gt;);&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// Actual run of your loop&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;//&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// Dispatch received events to their callbacks, waiting at most 20 ms for&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// new events between each batch.&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;//&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// The `&amp;amp;mut shared_data` is a mutable reference that will be forwarded to all&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// your callbacks, allowing them to easily share some state&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="n"&gt;event_loop&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;run&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;Duration&lt;/span&gt;::&lt;span class="n"&gt;from_millis&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="mi"&gt;20&lt;/span&gt;&lt;span class="p"&gt;),&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;&amp;amp;&lt;/span&gt;&lt;span class="k"&gt;mut&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;shared_data&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;|&lt;/span&gt;&lt;span class="n"&gt;shared_data&lt;/span&gt;&lt;span class="o"&gt;|&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="cm"&gt;/*&lt;/span&gt;
+&lt;span class="cm"&gt;        * Insert here the processing you need to do between each waiting batch (if any)&lt;/span&gt;
+&lt;span class="cm"&gt;        * like invoking your drawing logic if you&amp;#39;re writing a GUI app for example.&lt;/span&gt;
+&lt;span class="cm"&gt;        */&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="p"&gt;});&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="p"&gt;}&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+
+&lt;p&gt;Calloop provides a few implementation of the &lt;code&gt;EventSource&lt;/code&gt; trait such as a timer, a channel, and a
+generic adapter for monitoring a file descriptor for read/write readiness. At the moment calloop
+only supports Linux and the *BSD systems, but adding support for other platforms would be a welcome
+contribution!&lt;/p&gt;
+&lt;h2&gt;Can it work alongside async/await?&lt;/h2&gt;
+&lt;p&gt;Even if the core of your app works best will callbacks, some part of your needs might benefit from
+async/await. Since 0.7, calloop allows you to mix both paradigms. This is supported by two separate
+parts newly added to calloop: an async IO adapter, and an executor.&lt;/p&gt;
+&lt;p&gt;The async IO adapter provides an &lt;code&gt;Async&lt;/code&gt; type similar to the one provided by the
+&lt;a href="https://docs.rs/async-io"&gt;&lt;code&gt;async-io&lt;/code&gt;&lt;/a&gt; crate, but instead of spawning a background thread, it monitors
+the readiness of IO objects directy in the associated &lt;code&gt;EventLoop&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;The executor is, unsuprisingly, yet another implementation of the &lt;code&gt;EventSource&lt;/code&gt; trait, which can
+thus be inserted into an &lt;code&gt;EventLoop&lt;/code&gt; just like any other event source. It is paired with a
+cloneable &lt;code&gt;Scheduler&lt;/code&gt;, which can be used to spawn futures into the executor from anywhere.&lt;/p&gt;</content><category term="Releases"></category></entry><entry><title>Version 0.2 of Smithay</title><link href="https://smithay.github.io/smithay-v-0-2.html" rel="alternate"></link><published>2018-12-28T17:00:00+01:00</published><updated>2018-12-28T17:00:00+01:00</updated><author><name>Victor Berger</name></author><id>tag:smithay.github.io,2018-12-28:/smithay-v-0-2.html</id><summary type="html">&lt;p&gt;Announcement of version 0.2 of smithay, now providing the fundamentals of a wayland compositor.&lt;/p&gt;</summary><content type="html">&lt;p&gt;I am happy to announce the 0.2 release of &lt;a href="https://crates.io/crates/smithay"&gt;smithay&lt;/a&gt;. Smithay is a library
+for writing wayland compositors. With this release, it now contains all the fundamentals for building a
+working compositor.&lt;/p&gt;
+&lt;p&gt;A lot of things have changed since the 0.1 release one year ago. A large part of the crate has been completely
+rewritten, and work in smithay has also driven evolutions in its dependencies (a large part of which are
+also hosted in the smithay project).&lt;/p&gt;
+&lt;h2&gt;What has changed&lt;/h2&gt;
+&lt;p&gt;Here's a quick summary of the changes that occured since 0.1.&lt;/p&gt;
+&lt;h4&gt;Anvil&lt;/h4&gt;
+&lt;p&gt;Smithay now comes with &lt;code&gt;anvil&lt;/code&gt;, a reference implementation of a compositor built on smithay. It
+helps a lot with developing and testing new features and reproducing bugs. Anvil can be started
+as a Wayland or X11 client (using winit), or directly in a tty.&lt;/p&gt;
+&lt;p&gt;&lt;center&gt;
+&lt;img src="/images/smithay-v02.jpg" alt="Picture of anvil running on my laptop" width="60%"/&gt;&lt;/p&gt;
+&lt;p&gt;Anvil running on my laptop, with &lt;a href="https://github.com/jwilm/alacritty"&gt;alacritty&lt;/a&gt; started
+&lt;/center&gt;&lt;/p&gt;
+&lt;h4&gt;The DRM rewrite&lt;/h4&gt;
+&lt;p&gt;The whole graphics backend has been deeply refactored by &lt;a href="https://github.com/drakulix"&gt;@Drakulix&lt;/a&gt;,
+especially the DRM-handling code and the GBM and EGL abstractions on top of it, which are now clearly
+separated from one another. This improved the structure and clarity of the API, and paved the groundwork
+for future integration of new features, like atomic modesetting, EGLStreams, and vulkan support.&lt;/p&gt;
+&lt;h4&gt;Full core-protocol support&lt;/h4&gt;
+&lt;p&gt;Smithay now supports the entirety of the core wayland protocol, making it capable of running most
+wayland-native apps, such as most programs built on Qt5, Gtk+3 or
+&lt;a href="https://crates.io/crates/winit"&gt;winit&lt;/a&gt; (including &lt;a href="https://github.com/jwilm/alacritty"&gt;alacritty&lt;/a&gt;).&lt;/p&gt;
+&lt;h4&gt;Port to wayland-server 0.21&lt;/h4&gt;
+&lt;p&gt;Smithay has been ported to &lt;a href="https://crates.io/crates/wayland-server"&gt;wayland-server&lt;/a&gt; version 0.21 and
+&lt;a href="https://crates.io/crates/calloop"&gt;calloop&lt;/a&gt;, which opens the way for use of the pure-rust implementation
+of the wayland protocol. Smithay can already run with it, but support for OpenGL clients on the rust
+implementation is still blocked, waiting on some evolutions of the dma-buf protocol extensions.&lt;/p&gt;
+&lt;h4&gt;Basic XWayland support&lt;/h4&gt;
+&lt;p&gt;Smithay is now capable of starting and monitoring the XWayland server, for running X apps under wayland.
+However the XWayland server actually also requires to have an X window manager implemented in the wayland
+compositor, which Smithay does not have yet.&lt;/p&gt;
+&lt;h2&gt;The path forward&lt;/h2&gt;
+&lt;p&gt;There is of course still a lot of work to do, but the path forward can now be split into several
+more or less independent tasks, now that the core is mostly established. You can have a detailed view
+of them in the &lt;a href="https://github.com/smithay/smithay/issues"&gt;issue tracker&lt;/a&gt;, but here is a quick overview
+of the biggest ones:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Support for input events from touchscreens (&lt;a href="https://github.com/Smithay/smithay/issues/48"&gt;#48&lt;/a&gt;)&lt;/li&gt;
+&lt;li&gt;Implementation of an X Window Manager for XWayland support
+  (&lt;a href="https://github.com/Smithay/smithay/issues/25"&gt;#25&lt;/a&gt;)&lt;/li&gt;
+&lt;li&gt;Support for the DMABUF protocol extension (&lt;a href="https://github.com/Smithay/smithay/issues/96"&gt;#96&lt;/a&gt;)&lt;/li&gt;
+&lt;li&gt;Implement classic shell interactions in anvil (&lt;a href="https://github.com/Smithay/smithay/issues/94"&gt;#94&lt;/a&gt;)&lt;/li&gt;
+&lt;li&gt;Write some stand-alone focused examples for smithay (&lt;a href="https://github.com/Smithay/smithay/issues/99"&gt;#99&lt;/a&gt;)&lt;/li&gt;
+&lt;li&gt;Design and introduce higher-level abstractions over the low-level support currently implemented&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;If you are interested in the project, feel free to drop by in our matrix chatroom
+&lt;a href="https://matrix.to/#/#smithay:matrix.org"&gt;#smithay:matrix.org&lt;/a&gt;, which is also bridged to mozilla's IRC
+at &lt;em&gt;#smithay&lt;/em&gt; and to gitter at &lt;a href="https://gitter.im/smithay/Lobby"&gt;smithay/Lobby&lt;/a&gt;.&lt;/p&gt;
+&lt;p&gt;A large part of the work needed on smithay does not require extensive knowledge on the wayland protocol
+or the linux internals, and we are happy to mentor anyone interested in getting familiar with the project!&lt;/p&gt;</content><category term="Releases"></category></entry><entry><title>Wayland-rs 0.21: Pure rust implementation</title><link href="https://smithay.github.io/wayland-rs-v-0-21.html" rel="alternate"></link><published>2018-07-18T22:00:00+02:00</published><updated>2018-07-18T22:00:00+02:00</updated><author><name>Victor Berger</name></author><id>tag:smithay.github.io,2018-07-18:/wayland-rs-v-0-21.html</id><summary type="html">&lt;p&gt;Announcement of v0.21 of wayland-rs, featuring a pure rust implementation of the wayland protocol.&lt;/p&gt;</summary><content type="html">&lt;blockquote&gt;
+&lt;p&gt;&lt;a href="https://github.com/Smithay/wayland-rs"&gt;wayland-rs&lt;/a&gt; is a set of crates providing generic APIs to
+manipulate the &lt;a href="https://en.wikipedia.org/wiki/Wayland_(display_server_protocol)"&gt;Wayland protocol&lt;/a&gt;, 
+successor of X11 for linux windowing.&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;Here I am finally, after having
+&lt;a href="https://github.com/Smithay/wayland-rs/pull/165"&gt;hinted at the possibility&lt;/a&gt; and finally taken the
+time to write and merge &lt;a href="https://github.com/Smithay/wayland-rs/pull/170"&gt;quite an epic pull request&lt;/a&gt;,
+I can finally say it: wayland-rs is now a pure rust implementation of the protocol, rather than a
+crate of bindings to the &lt;a href="https://gitlab.freedesktop.org/wayland/wayland"&gt;wayland system C libraries&lt;/a&gt;.&lt;/p&gt;
+&lt;p&gt;Or is it? The people who have already discussed this matter know that abandoning the C wayland
+libraries is really cutting oneself from many interactions. It is most notably required by OpenGL, but also
+any other C library that you'd want to use and that interacts directly with wayland like GStreamer for
+example. This is obviously not something I'm ready (nor willing) to impose on the users of wayland-rs,
+among which are &lt;a href="https://github.com/tomaka/winit"&gt;winit&lt;/a&gt; and &lt;a href="https://github.com/tomaka/glutin"&gt;glutin&lt;/a&gt;,
+which quite  obviously need access to OpenGL...&lt;/p&gt;
+&lt;p&gt;This is why starting from the upcoming 0.21 release, wayland-client and wayland-server will simply let
+you choose what you want: the rust implementation or the C one.&lt;/p&gt;
+&lt;p&gt;This note is organized in three parts: first I'll detail what is the new design of the wayland-rs 
+crates and how they can be used, then I'll detail what the future looks like, and finally I'll share
+some insights, ideas, thoughts and frustrations I had during my work on this implementation.&lt;/p&gt;
+&lt;h3&gt;The new organization of wayland-rs&lt;/h3&gt;
+&lt;p&gt;While the API itself did not change a lot from 0.20 to 0.21, there was a very significant refactor
+of both wayland-client and wayland-server, shaping them around the new &lt;code&gt;native_lib&lt;/code&gt; cargo feature.
+The deal is simple, by default the crates use the rust implementation, and if you activate the feature
+they'll switch to using the system libraries, and expose new parts of the API which give you access
+to the necessary C pointers, allowing you to provide them to other C libraries that may need them.&lt;/p&gt;
+&lt;p&gt;In previous versions, the &lt;code&gt;native_lib&lt;/code&gt; feature flag was activated by default, and disabling it caused
+your program to quickly die on our dear &lt;code&gt;unimplemented!()&lt;/code&gt; macro. This is no longer the case!&lt;/p&gt;
+&lt;p&gt;Client side, the &lt;code&gt;egl&lt;/code&gt; feature of &lt;code&gt;wayland-client&lt;/code&gt; automatically pulls the &lt;code&gt;native_lib&lt;/code&gt; feature, as
+it is mandatory for OpenGL support and interacting with Mesa. Which means that either you were not
+using OpenGL, an you should be able to seamlessly migrate to the rust implementation, or you were
+using OpenGL and the crate will just stick to using the system libraries.&lt;/p&gt;
+&lt;h3&gt;What's next?&lt;/h3&gt;
+&lt;p&gt;The 0.21 version is not yet released. While my implementation passes the few tests I've done manually,
+I'm not yet to a coverage and testing I'm confident enough with to make it default. As such I'm only
+releasing a &lt;code&gt;0.21.0-alpha1&lt;/code&gt; version, to test it more thoroughly before making it the default.&lt;/p&gt;
+&lt;p&gt;Now that this huge milestone is reached, I'm going to radically switch the direction development of
+these crates. Up to now, I've mostly focused in making an API as reasonable as possible, but deeply
+rooted in the API exposed by the C libs I've been building upon. This will now change, as I plan for
+the Rust implementation to be the core drive of design of the crates, and relegate the C backend to
+be the one retrofitted into the rust API.&lt;/p&gt;
+&lt;p&gt;This opens a lot of design space, and as such there are numerous questions I'm not settled yet on.
+If you want to take part in this, I'd be glad to hear (or read) what you have to say! I'm
+using the &lt;a href="https://github.com/Smithay/wayland-rs/issues"&gt;github issue tracker&lt;/a&gt; to keep track of my
+questions and ideas. If you first want to get used with the libs, you can help too!
+&lt;a href="https://github.com/Smithay/wayland-rs/tree/master/tests"&gt;There are tons of tests that need to be written&lt;/a&gt;,
+and I'm willing to mentor anyone who wants to help.&lt;/p&gt;
+&lt;h3&gt;The thoughts and insights&lt;/h3&gt;
+&lt;p&gt;The pasts versions of these crates have been an incredible learning experience for me, notably on
+the exercise of trying to implement a safe and ergonomic API on top of a C lib that is definitely not
+rust-friendly. But actually implementing the protocol itself was quite a new level. I actually 
+designed the groundwork for this almost a year ago, and had the branch sleeping on my computer until
+I started seriously working on it again 2 months ago. I took some inspiration from
+&lt;a href="https://github.com/perceptia/skylane"&gt;skylane&lt;/a&gt;, but my work was really mostly reverse-engineering the
+C libs and taking inspiration from them.&lt;/p&gt;
+&lt;h4&gt;The protocol itself&lt;/h4&gt;
+&lt;p&gt;A large design constraint lies in the protocol itself. Wayland is spoken by binary messages over an
+unix socket. It is an object oriented protocol, where each message is associated to an object which
+defines its interface.&lt;/p&gt;
+&lt;p&gt;Which means that, to parse a message, you must know the type of the object that sent it. Which means
+a large part of the work of the implementation is actually to keep track of the map of which object
+exists and what their types are. And given a message can create or destroy objects, you need to have
+at least partially processed a message to be able to even &lt;em&gt;parse&lt;/em&gt; the next one! Talk about being
+stateful.&lt;/p&gt;
+&lt;p&gt;This is quite a constraint on the implementation, and I now better understand how well the callback
+oriented approach of the C libraries fits this protocol: the wayland using program provides a large
+set of callbacks to the wayland library, one for each possible message, the lib then takes care of
+firing them.&lt;/p&gt;
+&lt;h4&gt;virtual dispatch and runtime costs&lt;/h4&gt;
+&lt;p&gt;This whole implementation has also been for me quite a wake-up regarding runtime costs. Indeed
+Rust has a powerful monomorphisation and a lot can be done statically, but really, sometimes a
+trait object does the job pretty well, and at a greater simplicity.&lt;/p&gt;
+&lt;p&gt;In my case, it would not have been possible to avoid dynamic dispatch anyway: the contents of the
+messages the lib receive (which are runtime values) determines which of the (statically-typed)
+callbacks should be fired. There is no escape, so I embraced the dynamic dispatch.&lt;/p&gt;
+&lt;p&gt;As a result, I now have the wayland-scanner parsing the XML specifications of the protocol and its
+extensions, generating a lot of rust code, encoding the objects and their interfaces in various traits
+with associated types and constants. These traits allow me to build a dynamic representation of the 
+objects and their interfaces that the parser can then use at runtime to parse the protocol and 
+dispatch the messages to their callbacks.&lt;/p&gt;
+&lt;p&gt;In particular, I'm doing what I started calling "manual vtables" after a little epiphany I had 
+working on that. Because yeah, storing a function pointer in a struct is not very different from
+a vtable, is it?&lt;/p&gt;
+&lt;p&gt;For example I have this &lt;code&gt;Object&lt;/code&gt; type. It does not has any type parameter linked to the
+wayland objects. I can create an &lt;code&gt;Object&lt;/code&gt; from a type &lt;code&gt;I&lt;/code&gt; implementing my &lt;code&gt;Interface&lt;/code&gt; trait:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="kd"&gt;let&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;my_object&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;Object&lt;/span&gt;::&lt;span class="n"&gt;from_interface&lt;/span&gt;::&lt;span class="o"&gt;&amp;lt;&lt;/span&gt;&lt;span class="n"&gt;I&lt;/span&gt;&lt;span class="o"&gt;&amp;gt;&lt;/span&gt;&lt;span class="p"&gt;();&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+
+&lt;p&gt;This is my bridge from the static world to the dynamic one. The fields of the &lt;code&gt;Object&lt;/code&gt; are filled
+with the values from the associated constants of &lt;code&gt;I&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;And among the fields of &lt;code&gt;Object&lt;/code&gt; are a few function pointers, like &lt;code&gt;fn(u16, u32) -&amp;gt; Option&amp;lt;Object&amp;gt;&lt;/code&gt;,
+which are initialized by specializing generic functions:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="k"&gt;fn&lt;/span&gt; &lt;span class="nf"&gt;something&lt;/span&gt;&lt;span class="o"&gt;&amp;lt;&lt;/span&gt;&lt;span class="n"&gt;I&lt;/span&gt;: &lt;span class="nc"&gt;Interface&lt;/span&gt;&lt;span class="o"&gt;&amp;gt;&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;a&lt;/span&gt;: &lt;span class="kt"&gt;u16&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;b&lt;/span&gt;: &lt;span class="kt"&gt;u32&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;-&amp;gt; &lt;span class="nb"&gt;Option&lt;/span&gt;&lt;span class="o"&gt;&amp;lt;&lt;/span&gt;&lt;span class="n"&gt;Object&lt;/span&gt;&lt;span class="o"&gt;&amp;gt;&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// compute something using a, b, and the associated constants of I&lt;/span&gt;
+&lt;span class="p"&gt;}&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+
+&lt;span class="kd"&gt;let&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;object&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;Object&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="n"&gt;something_func&lt;/span&gt;: &lt;span class="nc"&gt;something&lt;/span&gt;::&lt;span class="o"&gt;&amp;lt;&lt;/span&gt;&lt;span class="n"&gt;MyInterface&lt;/span&gt;&lt;span class="o"&gt;&amp;gt;&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="o"&gt;..&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="p"&gt;}&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+
+&lt;p&gt;It's not a revolution, but I thought this was an interesting way to use the trait system. My
+implementation has a lot of these all over the place, in a deep mix of static and dynamic
+dispatch.&lt;/p&gt;
+&lt;p&gt;To be fair, the C-based code does also have these, so this is not really new. You need to have
+a way to retrieve some type information from a C callback where you only provide a function
+pointer and a &lt;code&gt;*mut c_void&lt;/code&gt; data!&lt;/p&gt;
+&lt;h4&gt;&lt;code&gt;Rc&lt;/code&gt;, &lt;code&gt;Refcell&lt;/code&gt;, &lt;code&gt;Arc&lt;/code&gt; and &lt;code&gt;Mutex&lt;/code&gt; are friends, not ennemies&lt;/h4&gt;
+&lt;p&gt;No really, they are all over the place, and they do a pretty good job!&lt;/p&gt;
+&lt;p&gt;It's cool to be able to avoid runtime costs if you really need to, but sometimes it's not worth
+the pain. I don't need top performance, as the wayland socket is hardly a bottleneck in general.&lt;/p&gt;
+&lt;p&gt;I thus focused on making things work correctly, without any care for performance. I'll come back
+later to refactor all that anyway, iterating to improve the API's ergonomics.&lt;/p&gt;
+&lt;p&gt;Thanks for reading this, and have some happy Rusting!&lt;/p&gt;</content><category term="Releases"></category></entry><entry><title>Wayland-rs 0.20 &amp; Smithay's Client Toolkit</title><link href="https://smithay.github.io/wayland-rs-v-0-20.html" rel="alternate"></link><published>2018-04-26T18:00:00+02:00</published><updated>2018-04-26T18:00:00+02:00</updated><author><name>Victor Berger</name></author><id>tag:smithay.github.io,2018-04-26:/wayland-rs-v-0-20.html</id><summary type="html">&lt;p&gt;Status point of the project: large rework of the wayland bindings in version 0.20, and announcement of Smithay's Client Toolkit.&lt;/p&gt;</summary><content type="html">&lt;p&gt;This article marks the end of a large rework of the
+&lt;a href="https://github.com/smithay/wayland-rs/"&gt;wayland-rs&lt;/a&gt; group of crates. For context, this
+repository hosts a few crates offering bindings to the wayland protocol, both client-side
+via &lt;a href="https://docs.rs/wayland-client/"&gt;wayland-client&lt;/a&gt; and server-side via
+&lt;a href="https://docs.rs/wayland-server/"&gt;wayland-server&lt;/a&gt;.&lt;/p&gt;
+&lt;p&gt;This is a major step compared to previous version, 0.14, and the large gap in version numbers
+is meant to reflect it. The whole API has been completely overhauled using the insights we
+got from working on &lt;a href="https://github.com/smithay/smithay"&gt;smithay&lt;/a&gt;, using &lt;code&gt;wayland-server&lt;/code&gt;.&lt;/p&gt;
+&lt;h2&gt;Summary of the changes&lt;/h2&gt;
+&lt;p&gt;If I had to describe this refactor in a single sentence, I'd say: "don't be afraid to trade
+small runtime costs for large ergonomic improvements". The previous design of the libraries
+tried to remain as low-overhead possible as possible on the wayland C libs. This caused an
+API that was quite convoluted to try to
+&lt;a href="https://docs.rs/token_store/"&gt;make safe sharing of mutable state&lt;/a&gt;, and at 
+some points not very different from manually re-implementing a v-table. Other issues more
+specific to smithay resulted in a large accumulation of template parameters on types that need
+to be named and stored. All these issues made the API quite tedious to use overall.&lt;/p&gt;
+&lt;p&gt;As a result, for this new version I decided to embrace trait objects, &lt;code&gt;Rc&lt;/code&gt;, and &lt;code&gt;Arc&lt;/code&gt;.
+Additionally, the API redesign was made focusing on &lt;em&gt;the spirit&lt;/em&gt; of the wayland protocol,
+rather than trying to stay close to &lt;em&gt;the C API&lt;/em&gt;.&lt;/p&gt;
+&lt;p&gt;To list a few clear gains from this rework:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;The scanner (crate that generate API code from the XML protocol files) almost no longer
+  needs to generate &lt;code&gt;unsafe { }&lt;/code&gt; blocks in its generated code&lt;/li&gt;
+&lt;li&gt;The long standing issue of handling both &lt;code&gt;Send&lt;/code&gt; and non-&lt;code&gt;Send&lt;/code&gt; shared state is finally
+  solved (see next section)&lt;/li&gt;
+&lt;li&gt;The ergonomics and flexibility of specifying callbacks for wayland events has been greatly
+  improved&lt;/li&gt;
+&lt;li&gt;Overall better interaction with objects from the C world, if wayland-rs is used in
+  combination with C libraries&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;Another interesting point is that, as this rework is much less centered around the C API,
+it allowed me to keep open the door for a full-rust implementation of the protocol. Thus I
+designed the libraries around a cargo feature &lt;code&gt;native_lib&lt;/code&gt;, controlling whether the native
+C library should be used or not. Currently, the libraries are &lt;em&gt;not&lt;/em&gt; usable without this
+cargo feature enabled (most of the code is &lt;code&gt;unimplemented!()&lt;/code&gt;), but it should allow for
+implementing this afterwards, without changing public API at all. Meaning that for programs
+that don't specifically need the &lt;code&gt;native_lib&lt;/code&gt; feature (that will still be required for
+interacting with C libraries for example), enabling or disabling this feature would be
+transparent.&lt;/p&gt;
+&lt;p&gt;Note however that I currently have no plans about &lt;em&gt;when&lt;/em&gt; I'll do that, mostly because
+quite a lot of things are higher on my todo-list. But if this question interests you,
+don't hesitate to &lt;a href="/pages/contact.html"&gt;get in touch&lt;/a&gt;, I'd be happy to work on it sooner
+if it means not doing it alone. ;)&lt;/p&gt;
+&lt;h2&gt;The new callback specification&lt;/h2&gt;
+&lt;p&gt;The most major API change is on the way callbacks are handled. Previously you had to provide
+a set of freestanding functions that would be given access to some state data for each event,
+with the difficulties of sharing state between an undeterminate set of callbacks a priori...&lt;/p&gt;
+&lt;p&gt;Now each time a new protocol object is created, you'll receive it as a &lt;code&gt;NewProxy&lt;/code&gt;/&lt;code&gt;NewResource&lt;/code&gt;
+object (depending on whether you are client side or server side), and will have to implement
+it before accessing the real &lt;code&gt;Proxy&lt;/code&gt;/&lt;code&gt;Resource&lt;/code&gt; and being able to use it. Implementing an
+object consists of providing a type implementing the appropriate &lt;code&gt;Implementation&amp;lt;Meta, Msg&amp;gt;&lt;/code&gt;
+trait.&lt;/p&gt;
+&lt;p&gt;This trait has a very simple definition:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="k"&gt;pub&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="k"&gt;trait&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;Implementation&lt;/span&gt;&lt;span class="o"&gt;&amp;lt;&lt;/span&gt;&lt;span class="n"&gt;Meta&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;Msg&lt;/span&gt;&lt;span class="o"&gt;&amp;gt;&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="k"&gt;fn&lt;/span&gt; &lt;span class="nf"&gt;receive&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="o"&gt;&amp;amp;&lt;/span&gt;&lt;span class="k"&gt;mut&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="bp"&gt;self&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;msg&lt;/span&gt;: &lt;span class="nc"&gt;Msg&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;meta&lt;/span&gt;: &lt;span class="nc"&gt;Meta&lt;/span&gt;&lt;span class="p"&gt;);&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="p"&gt;}&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;
+
+&lt;p&gt;Here the &lt;code&gt;Meta&lt;/code&gt; type parameter represent some metadata associated with the message you
+receive (often a &lt;code&gt;Proxy&lt;/code&gt;/&lt;code&gt;Resource&lt;/code&gt; handle to the wayland object receiving the message),
+while &lt;code&gt;Msg&lt;/code&gt; is a type representing the message itself (often an enum of the possible wayland
+messages this object can receive).&lt;/p&gt;
+&lt;p&gt;The convenience is that &lt;code&gt;Implementation&amp;lt;Meta, Msg&amp;gt;&lt;/code&gt; is automatically implemented for all
+type that implement &lt;code&gt;FnMut(Msg, Meta)&lt;/code&gt;. As such, you can easily provide closures as
+implementations, with all the ergonomics of capturing values and code terseness that
+implies. The only catch being that the implementations must be &lt;code&gt;'static&lt;/code&gt;, so you'll need
+to rely on &lt;code&gt;Arc&lt;/code&gt; or &lt;code&gt;Rc&lt;/code&gt; to share data. The runtime cost implied should be negligible however,
+the wayland protocol part should hardly be a bottleneck for any application.&lt;/p&gt;
+&lt;p&gt;There are also two ways to implement an object, the default one requiring the 
+implementation type to be &lt;code&gt;Send&lt;/code&gt;, and a secondary one that relaxes this requirement provided you
+provide a token that proves you are doing it from the same thread as the one on which the
+implementation will be invoked.&lt;/p&gt;
+&lt;h2&gt;Smithay's Client Toolkit&lt;/h2&gt;
+&lt;p&gt;I also took the occasion of this large API rework to fuse
+&lt;a href="https://github.com/smithay/wayland-kbd"&gt;wayland-kbd&lt;/a&gt; and
+&lt;a href="https://github.com/smithay/wayland-window"&gt;wayland-window&lt;/a&gt; into a single crate named
+&lt;a href="https://github.com/smithay/client-toolkit"&gt;smithay-client-toolkit&lt;/a&gt;, which will be some
+kind of an equivalent of &lt;a href="https://github.com/smithay/smithay"&gt;smithay&lt;/a&gt;, but for client
+applications. Given the scope of what is possible, it'll clearly remain much simpler than
+smithay itself, as it only abstracts the wayland protocol, and nothing like all of
+smithay's backends.&lt;/p&gt;
+&lt;p&gt;Currently, it only provides some barebones functionalities, but there is still a lot
+of room in this toolkit to grow if you want to get involved.&lt;/p&gt;
+&lt;p&gt;As an example, a minimal client could be created like this:&lt;/p&gt;
+&lt;div class="highlight"&gt;&lt;pre&gt;&lt;span&gt;&lt;/span&gt;&lt;code&gt;&lt;span class="k"&gt;extern&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="k"&gt;crate&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;smithay_client_toolkit&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="k"&gt;as&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;sctk&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+
+&lt;span class="k"&gt;use&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;sctk&lt;/span&gt;::&lt;span class="n"&gt;Environment&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="k"&gt;use&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;sctk&lt;/span&gt;::&lt;span class="n"&gt;window&lt;/span&gt;::&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="n"&gt;BasicFrame&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;Window&lt;/span&gt;&lt;span class="p"&gt;};&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+
+&lt;span class="c1"&gt;// wayland-client is re-exported in the client toolkit, for convenience&lt;/span&gt;
+&lt;span class="k"&gt;use&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;sctk&lt;/span&gt;::&lt;span class="n"&gt;reexports&lt;/span&gt;::&lt;span class="n"&gt;client&lt;/span&gt;::&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="n"&gt;Display&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;Proxy&lt;/span&gt;&lt;span class="p"&gt;};&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="k"&gt;use&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;sctk&lt;/span&gt;::&lt;span class="n"&gt;reexports&lt;/span&gt;::&lt;span class="n"&gt;client&lt;/span&gt;::&lt;span class="n"&gt;protocol&lt;/span&gt;::&lt;span class="n"&gt;wl_display&lt;/span&gt;::&lt;span class="n"&gt;RequestsTrait&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="k"&gt;as&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;DisplayRequests&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="k"&gt;use&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;sctk&lt;/span&gt;::&lt;span class="n"&gt;reexports&lt;/span&gt;::&lt;span class="n"&gt;client&lt;/span&gt;::&lt;span class="n"&gt;protocol&lt;/span&gt;::&lt;span class="n"&gt;wl_compositor&lt;/span&gt;::&lt;span class="n"&gt;RequestsTrait&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="k"&gt;as&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;CompositorRequests&lt;/span&gt;&lt;span class="p"&gt;;&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+
+&lt;span class="k"&gt;fn&lt;/span&gt; &lt;span class="nf"&gt;main&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// Connect to a wayland server&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="kd"&gt;let&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;display&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="k"&gt;mut&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;event_queue&lt;/span&gt;&lt;span class="p"&gt;)&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;Display&lt;/span&gt;::&lt;span class="n"&gt;connect_to_env&lt;/span&gt;&lt;span class="p"&gt;().&lt;/span&gt;&lt;span class="n"&gt;unwrap&lt;/span&gt;&lt;span class="p"&gt;();&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// The Environment an abstraction that binds most of the classic globals&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// for you. Doing this manually is very boring and repetitive.&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="kd"&gt;let&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;env&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="n"&gt;Environment&lt;/span&gt;::&lt;span class="n"&gt;from_registry&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="n"&gt;display&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;get_registry&lt;/span&gt;&lt;span class="p"&gt;().&lt;/span&gt;&lt;span class="n"&gt;unwrap&lt;/span&gt;&lt;span class="p"&gt;(),&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;&amp;amp;&lt;/span&gt;&lt;span class="k"&gt;mut&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;event_queue&lt;/span&gt;&lt;span class="p"&gt;).&lt;/span&gt;&lt;span class="n"&gt;unwrap&lt;/span&gt;&lt;span class="p"&gt;();&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// Create a wl_surface, which is the canvas on which we can draw the&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// contents of our window&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="kd"&gt;let&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;surface&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;env&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;compositor&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;create_surface&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;unwrap&lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;implement&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="o"&gt;|&lt;/span&gt;&lt;span class="n"&gt;_&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;_&lt;/span&gt;&lt;span class="o"&gt;|&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="cm"&gt;/* this is the surface implementation, this one ignores all events */&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="p"&gt;});&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// Now create a Window for this surface&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// The window abstracts all the protocol handling of the shell, and provides&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// a simplistic decoration for our window (as many wayland compositors require the&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// clients to draw their decorations themselves).&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// The type parameter (here `BasicFrame`) defines what kind of decorations are drawn,&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// and can be customized by implementing the appropriate trait.&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="kd"&gt;let&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="k"&gt;mut&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;window&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;=&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="n"&gt;Window&lt;/span&gt;::&lt;span class="o"&gt;&amp;lt;&lt;/span&gt;&lt;span class="n"&gt;BasicFrame&lt;/span&gt;&lt;span class="o"&gt;&amp;gt;&lt;/span&gt;::&lt;span class="n"&gt;init&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="n"&gt;surface&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="mi"&gt;640&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="mi"&gt;480&lt;/span&gt;&lt;span class="p"&gt;),&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="o"&gt;&amp;amp;&lt;/span&gt;&lt;span class="n"&gt;env&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;compositor&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="o"&gt;&amp;amp;&lt;/span&gt;&lt;span class="n"&gt;env&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;subcompositor&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="o"&gt;&amp;amp;&lt;/span&gt;&lt;span class="n"&gt;env&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;shm&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="o"&gt;&amp;amp;&lt;/span&gt;&lt;span class="n"&gt;env&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;shell&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="k"&gt;move&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="o"&gt;|&lt;/span&gt;&lt;span class="n"&gt;event&lt;/span&gt;&lt;span class="p"&gt;,&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;()&lt;/span&gt;&lt;span class="o"&gt;|&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;            &lt;/span&gt;&lt;span class="cm"&gt;/* handle the window&amp;#39;s events */&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="p"&gt;},&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="p"&gt;).&lt;/span&gt;&lt;span class="n"&gt;expect&lt;/span&gt;&lt;span class="p"&gt;(&lt;/span&gt;&lt;span class="s"&gt;&amp;quot;Failed to create a window !&amp;quot;&lt;/span&gt;&lt;span class="p"&gt;);&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="c1"&gt;// The main event loop&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="k"&gt;loop&lt;/span&gt;&lt;span class="w"&gt; &lt;/span&gt;&lt;span class="p"&gt;{&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="c1"&gt;// flush our messages to the server&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="n"&gt;display&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;flush&lt;/span&gt;&lt;span class="p"&gt;().&lt;/span&gt;&lt;span class="n"&gt;unwrap&lt;/span&gt;&lt;span class="p"&gt;();&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="c1"&gt;// receive and process the messages it sends back&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="c1"&gt;// this is where all the appropriate implementations are called internally&lt;/span&gt;
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="n"&gt;event_queue&lt;/span&gt;&lt;span class="p"&gt;.&lt;/span&gt;&lt;span class="n"&gt;dispatch&lt;/span&gt;&lt;span class="p"&gt;().&lt;/span&gt;&lt;span class="n"&gt;unwrap&lt;/span&gt;&lt;span class="p"&gt;();&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+
+&lt;span class="w"&gt;        &lt;/span&gt;&lt;span class="cm"&gt;/*&lt;/span&gt;
+&lt;span class="cm"&gt;          Do any other processing we need, including redrawing the surface if needed&lt;/span&gt;
+&lt;span class="cm"&gt;        */&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="w"&gt;    &lt;/span&gt;&lt;span class="p"&gt;}&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;span class="p"&gt;}&lt;/span&gt;&lt;span class="w"&gt;&lt;/span&gt;
+&lt;/code&gt;&lt;/pre&gt;&lt;/div&gt;</content><category term="Releases"></category></entry><entry><title>Version 0.1 of Smithay</title><link href="https://smithay.github.io/smithay-v-0-1.html" rel="alternate"></link><published>2017-10-05T17:00:00+02:00</published><updated>2017-10-05T17:00:00+02:00</updated><author><name>Victor Berger</name></author><id>tag:smithay.github.io,2017-10-05:/smithay-v-0-1.html</id><summary type="html">&lt;p&gt;Announcement of version 0.1 of smithay, and a general presentation of the project and its goals.&lt;/p&gt;</summary><content type="html">&lt;p&gt;A few days ago we released version 0.1 of the &lt;a href="https://crates.io/crates/smithay"&gt;smithay crate&lt;/a&gt;,
+its first release on crates.io. On this occasion, let me make a slightly detailed presentation of this
+wayland compositor library.&lt;/p&gt;
+&lt;p&gt;First of all, let me give some context of wayland, in order to show what problem smithay tries to solve.
+If you already know about this protocol, feel free to jump to next section.&lt;/p&gt;
+&lt;h2&gt;Wayland background&lt;/h2&gt;
+&lt;p&gt;The &lt;a href="https://wayland.freedesktop.org/"&gt;wayland protocol&lt;/a&gt; aims at replacing the X11 protocol as the standard
+communication mean between graphical client apps and the display server on linux. The rationale for this is
+that given how X11 is old, has accumulated a lot of debt over the years, and is full of security holes, it's
+better to just start over with a new protocol. The project has been going for a few years now and adoption
+is getting pretty good. Notably Gtk/Gnome and Qt/KDE are now almost fully compatible, and some linux
+distributions have started enabling it by default.&lt;/p&gt;
+&lt;p&gt;In a few points, here are the main difference between Wayland and X11:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Wayland is much smaller and barebones. We could push the analogy to the point of saying that Wayland
+  is to X11 what Vulkan is to OpenGL. For example, a Wayland client is expected to fully handle the
+  drawing of its content, and just hand a buffer to the server via shared memory, while the X11 protocol
+  embeds many drawing primitives (though many recent X11 apps already do it that way anyway).&lt;/li&gt;
+&lt;li&gt;Wayland puts a lot of focus on security and client isolation. A wayland client does now know if other
+  clients are running, let alone accessing their data while any X11 client can hijack the inputs of any
+  other, or read the contents of any window. This is typically the kind of things keyloggers do.&lt;/li&gt;
+&lt;li&gt;Wayland does not have a single implementation. KDE and Gnome both ship their own wayland server, and there
+  is the reference server Weston, as well a some others. X11 had its de-facto unique implementation Xorg,
+  and window managers connected to the server as privilegied clients. Wayland window managers &lt;em&gt;are&lt;/em&gt; the
+  servers.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;This last point is core to Smithay's use: writing a full wayland server is a lot of work. There is the
+need to handle all the clients protocol-wise, do all the job of a window manager, but also manage the
+low-level resources with the kernel, initialize the framebuffers, retrieve and process the raw inputs,
+do the actual drawing and compositing, draw and manage the whole desktop user interface and so forth…&lt;/p&gt;
+&lt;p&gt;As such, while big projects like Gnome or KDE can afford doing all this in a very personal and customized
+way, smaller wayland compositors have started to rely on compositor libraries that do part of this job
+for you. Examples are &lt;a href="https://github.com/wayland-project/weston"&gt;libweston&lt;/a&gt;,
+&lt;a href="https://github.com/swaywm/wlroots"&gt;wlroots&lt;/a&gt;, or the now mostly abandonned &lt;a href="https://github.com/Cloudef/wlc"&gt;WLC&lt;/a&gt;.&lt;/p&gt;
+&lt;p&gt;Smithay is a compositor library written in Rust.&lt;/p&gt;
+&lt;h2&gt;What's in this 0.1?&lt;/h2&gt;
+&lt;p&gt;This first releases brings the most basic building blocks necessary to build a compositor. Smithay
+is designed in a modular bottom-up fashion: we currently have several independant low-level modules,
+each managing a very specific part of what "being a wayland compositor" requires. Smithay's user can
+then use these modules and configure them as they please to set up their compositor.&lt;/p&gt;
+&lt;p&gt;We will consider integrating higher-level modules into Smithay in the future. They would be built on
+top of the low-level ones, but there is still much work to do with the low-level ones, and this
+takes priority!&lt;/p&gt;
+&lt;p&gt;Smithay modules are currently organized in two groups: backend modules and wayland modules.&lt;/p&gt;
+&lt;h4&gt;Backend modules&lt;/h4&gt;
+&lt;p&gt;The backend modules are here to ease integration with the operating system. They abstract away the
+setup of the framebuffers, initialization of an OpenGL context to draw on, and retrieval of user
+inputs. Currently two backends exist:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;The DRM + libinput backend, which allows to start a smithay-based compositor directly in a TTY,
+  like a regular graphical environment.&lt;/li&gt;
+&lt;li&gt;the winit backend, which allows to start a smithay-based compositor as a winit app (and as such
+  as an X11 or wayland client). Being able to launch the compositor as a client helps a lot with
+  the development and debugging.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;h4&gt;Frontend modules&lt;/h4&gt;
+&lt;p&gt;The wayland modules take care of several aspects of the wayland protocol and manage the
+state of the wayland clients. Currently 3 main tasks are implemented:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Keeping track of shared memory buffers sent by the clients in the form of a shared memory map
+  (note: this does not handle opengl clients).&lt;/li&gt;
+&lt;li&gt;Keeping track of the client surfaces and their relations to each other. Wayland clients define their
+  window contents by creating one or more surfaces, positioning them relative to each other, and
+  attaching buffers to them.&lt;/li&gt;
+&lt;li&gt;Forwarding inputs to the clients selectively based on current pointer or keyboard focus.&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;All this together already allows the handling of several type of clients. For example, it is possible to
+run &lt;code&gt;weston-terminal&lt;/code&gt; (a wayland terminal emulator provided by weston) in the smithay examples:&lt;/p&gt;
+&lt;p&gt;&lt;img alt="Smithay running weston-terminal" src="/images/smithay-0-1.png"&gt;&lt;/p&gt;
+&lt;p&gt;&lt;em&gt;The black borders are a graphical artefact from smithay's example, that we just haven't got around
+fixing yet.&lt;/em&gt;&lt;/p&gt;
+&lt;h2&gt;How can I run it?&lt;/h2&gt;
+&lt;p&gt;If you want to play around with smithay and see what it can do, check out the
+&lt;a href="https://github.com/Smithay/smithay/tree/master/examples"&gt;examples in the github repository&lt;/a&gt;. A lot
+of code is still needed for a compositor built on smithay to work, and there is not nearly enough
+space in this blog post to paste the code.&lt;/p&gt;
+&lt;p&gt;You can also check out &lt;a href="https://docs.rs/smithay"&gt;Smithay's documentation on docs.rs&lt;/a&gt;. The crate-level
+docs are minimalistic, but we try to expand on all the details in the documentation of the individual
+modules.&lt;/p&gt;
+&lt;h2&gt;What's next?&lt;/h2&gt;
+&lt;p&gt;For the next steps, we plan to keep working on the fundamentals. Some of the most important remaining features are:&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;Finish implementing the core wayland protocol (still missing: touch events, copy/paste, and a few other things)&lt;/li&gt;
+&lt;li&gt;Integrate more with the OS (udev, consolekit/logind) to allow starting proper graphical sessions&lt;/li&gt;
+&lt;li&gt;Implement support for OpenGL clients&lt;/li&gt;
+&lt;li&gt;Implement support fo Xwayland, the compatibility layer to run X11 apps in a wayland environment&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;If you are interested, your contributions would be very welcome! Most of the work on the backends don't
+require any wayland knowledge. We've also started to work on a &lt;a href="https://smithay.github.io/book/"&gt;smithay book&lt;/a&gt;.
+For now it only contains explanations of the wayland protocol itself, but we plan to incorporate detailed tutorials
+on how to create wayland client apps using the &lt;code&gt;wayland-client&lt;/code&gt; crate, and how to create wayland compositors using
+&lt;code&gt;wayland-server&lt;/code&gt; and &lt;code&gt;smithay&lt;/code&gt;.&lt;/p&gt;
+&lt;p&gt;We have a matrix chatroom &lt;a href="https://matrix.to/#/#smithay:matrix.org"&gt;@smithay:matrix.org&lt;/a&gt;, which
+is also bridged to mozilla's IRC at &lt;em&gt;#smithay&lt;/em&gt; and to gitter at &lt;a href="https://gitter.im/smithay/Lobby"&gt;smithay/Lobby&lt;/a&gt;.
+Feel free to drop by!&lt;/p&gt;</content><category term="Releases"></category></entry></feed>
