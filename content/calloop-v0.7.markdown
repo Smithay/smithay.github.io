@@ -20,11 +20,11 @@ reactive context: waiting for events and quickly reacting to them. Indeed, why w
 async/await if you never need to `.await` anything? This is for a large part our context of
 work in Smithay, and so we developed calloop.
 
-Calloop is designed trying to ease the friction with Rust as much as possible. The central
-issue, state sharing, is managed though some global shared data. When you're running your event
-loop, you can provide the method with a `&mut Data` reference, that is then passed down to all
-of your callbacks. If this `Data` contains the state of your app, all your callbacks can then
-access it as if they were all methods of the same object.
+Calloop is designed trying to ease the friction of using callbacks in Rust as much as possible.
+The central issue, state sharing, is managed though some global shared data. A mutable reference
+to some value of your choosing is passed down to all callbacks. As the whole event loop is
+single-threaded, this allows them access to your state without any synchronization or
+reference-counted pointers, as if they were all methods of the same object.
 
 In a nutshell, calloop is mostly targeted at apps that spend a large portion of their time just
 waiting for something to happen, and need to quickly react to it as opposed to apps that need
