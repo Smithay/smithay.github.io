@@ -7,7 +7,7 @@ Summary: Announcement of version 0.3 of Smithay, with many improvements and chan
 
 I am proud to finally announce the release of version 0.3 of [Smithay]!
 
-Smithay is a library for writing Wayland compositors. A Wayland compositor has a lot of things to manage,
+[Smithay] is a library for writing Wayland compositors. A Wayland compositor has a lot of things to manage,
 both binding directly to low-level system APIs and managing the numerous Wayland clients that are running
 on the system. Smithay provides several abstractions that simplify this job for your, while trying to remain
 mostly unopinionated to not constrain the design space for the compositors based on it.

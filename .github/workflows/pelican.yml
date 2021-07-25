@@ -1,0 +1,20 @@
+name: Pelican publish
+
+on:
+  push:
+    branches:
+      - content
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+        with:
+          submodules: recursive
+      - name: Pelican publish
+        uses: nelsonjchen/gh-pages-pelican-action@0.1.10
+        env:
+          GITHUB_TOKEN: ${{secrets.GITHUB_TOKEN}}
+          GH_PAGES_BRANCH: master
