@@ -31,13 +31,13 @@ providing functions to draw the clients' windows content into your main composit
 renderer implementation is also provided, and a Vulkan-based on is on the roadmap.
 
 Alongside this refactor, [Smithay] gained support for DRM atomic modesetting as well as DRM planes.
-Furthermore, Anvil (our reference compositor) is now able to handle multi-monitor setups
+Furthermore, Anvil (our reference compositor) is now able to handle multi-monitor setups.
 
 #### Client surface state handling
 
 The Wayland protocol mandates intricate semantics for the double-buffered state of wayland surfaces (notably
 when considering synchronized subsurfaces), that extend to protocol-extensions that piggy-back on this
-mechanism. [Smithay] now provides a generic mechanism for tracking an applying this state. For details about
+mechanism. [Smithay] now provides a generic mechanism for tracking and applying this state. For details about
 its usage, see the [`wayland::compositor`](https://smithay.github.io/smithay/smithay/wayland/compositor/index.html)
 module, and notably the [`SurfaceData`](https://smithay.github.io/smithay/smithay/wayland/compositor/struct.SurfaceData.html)
 struct which is the actual container.
@@ -47,10 +47,10 @@ struct which is the actual container.
 While previously most backend components of [Smithay] required you to provide a trait-based callback for
 handling their events, they are now all converted into being [calloop] event sources. This makes it much
 easier to handle your global compositor state, by using
-[calloop's shared data mechanism](https://docs.rs/calloop/0.9.0/calloop/index.html), which gives you access
+[calloop's shared data mechanism](https://docs.rs/calloop/0.9.0/calloop/index.html) which gives you access
 to a `&mut T` reference of your choice in all your callbacks. Anvil uses this pattern: the
 [`AnvilState`](https://github.com/Smithay/smithay/blob/7e4e78151aa86df71efb93266205ab3f705f9177/anvil/src/state.rs#L30)
-centralizes most of the compositor internal state, allowing us to retain the use of `Rc` and `RefCell` to
+centralizes most of the compositor-internal state, allowing us to retain the use of `Rc` and `RefCell` to
 minimum.
 
 ## New contributors
@@ -71,7 +71,7 @@ thank them for their involvement:
 
 ## Next steps
 
-We now feel that Smithay is in a state where it is realistic to start building  a serious compositor using it.
+We now feel that Smithay is in a state where it is realistic to start building a serious compositor using it.
 It is not finished, but the fundamental parts are in place and working.
 
 The next steps we will be taking involve mainly two axes. The first one is introducing support for more Wayland
@@ -82,7 +82,7 @@ the client windows and shell interactions in the compositor graphical space.
 
 If you are interested in the project, feel free to drop by in our matrix chatroom `#smithay:matrix.org`,
 which is also bridged to IRC at `#smithay` on [libera.chat]. Working on Smithay does not necessarily require
-extensive knowledge on the Wayland protocol or the Linux internals, and we are happy to mentor anyone interested
+extensive knowledge of the Wayland protocol or Linux internals, and we are happy to mentor anyone interested
 in getting familiar with the project!
 
 [Smithay]: https://crates.io/crates/smithay
