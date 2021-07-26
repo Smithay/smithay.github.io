@@ -80,7 +80,7 @@ protocols from the [wlr-protocols] set. The second axis is the construction of h
 managing the various parts of the compositor state, and notably the multiple monitors and the organisation of
 the client windows and shell interactions in the compositor graphical space.
 
-If you are interested in the project, feel free to drop by in our matrix chatroom `#smithay:matrix.org`,
+If you are interested in the project, feel free to drop by in our matrix chatroom [`#smithay:matrix.org`],
 which is also bridged to IRC at `#smithay` on [libera.chat]. Working on Smithay does not necessarily require
 extensive knowledge of the Wayland protocol or Linux internals, and we are happy to mentor anyone interested
 in getting familiar with the project!
@@ -95,3 +95,4 @@ in getting familiar with the project!
 [libera.chat]: https://libera.chat/
 [wayland-protocols]: https://gitlab.freedesktop.org/wayland/wayland-protocols/
 [wlr-protocols]: https://github.com/swaywm/wlr-protocols
+[`#smithay:matrix.org`]: https://matrix.to/#/#smithay:matrix.org
