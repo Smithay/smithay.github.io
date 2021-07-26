@@ -31,7 +31,7 @@ providing functions to draw the clients' windows content into your main composit
 renderer implementation is also provided, and a Vulkan-based on is on the roadmap.
 
 Alongside this refactor, [Smithay] gained support for DRM atomic modesetting as well as DRM planes.
-Furthermore, Anvil is now able to handle multi-monitor setups
+Furthermore, Anvil (our reference compositor) is now able to handle multi-monitor setups
 
 #### Client surface state handling
 
