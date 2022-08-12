@@ -11,4 +11,4 @@ any of these (they are all bridged together):
 - IRC: [#smithay@irc.mozilla.org](https://wiki.mozilla.org/IRC)
 
 This chatroom is relevant for both discussions about using the crates and
-developping them.
+developing them.
