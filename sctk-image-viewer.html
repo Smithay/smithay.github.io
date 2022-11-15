@@ -1,0 +1,699 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <!-- Required meta tags -->
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+
+  <title>  An image viewer using Smithay's Client Toolkit | Smithay project
+</title>
+  <link rel="canonical" href="/sctk-image-viewer.html">
+
+
+  <link rel="stylesheet" href="/theme/css/bootstrap.min.css">
+  <link rel="stylesheet" href="/theme/css/font-awesome.min.css">
+  <link rel="stylesheet" href="/theme/css/pygments/default.min.css">
+  <link rel="stylesheet" href="/theme/css/theme.css">
+
+  
+  <meta name="description" content="Small tutorial of using Smithay's Client Toolkit by example, building a small image viewer as a Wayland client.">
+
+
+</head>
+
+<body>
+  <header class="header">
+    <div class="container">
+<div class="row">
+    <div class="col-sm-4">
+      <a href="/">
+        <img class="img-fluid rounded" src=/images/smithay_logo.svg alt="Smithay project">
+      </a>
+    </div>
+  <div class="col-sm-8">
+    <h1 class="title"><a href="/">Smithay project</a></h1>
+      <p class="text-muted">The rusty smithy for wayland compositors</p>
+      <ul class="list-inline">
+            <li class="list-inline-item"><a href="/pages/about.html">About</a></li>
+            <li class="list-inline-item"><a href="/pages/contact.html">Contact</a></li>
+            <li class="list-inline-item"><a href="/pages/documentation.html">Documentation</a></li>
+            <li class=" list-inline-item text-muted">|</li>
+          <li class="list-inline-item"><a class="fa fa-github" href="https://github.com/Smithay" target="_blank"></a></li>
+      </ul>
+  </div>
+</div>    </div>
+  </header>
+
+  <div class="main">
+    <div class="container">
+      <h1>  An image viewer using Smithay's Client Toolkit
+</h1>
+      <hr>
+  <article class="article">
+    <header>
+      <ul class="list-inline">
+        <li class="list-inline-item text-muted" title="2018-05-10T14:00:00+02:00">
+          <i class="fa fa-clock-o"></i>
+          Thu 10 May 2018
+        </li>
+        <li class="list-inline-item">
+          <i class="fa fa-folder-open-o"></i>
+          <a href="/category/tutorials.html">Tutorials</a>
+        </li>
+          <li class="list-inline-item">
+            <i class="fa fa-user-o"></i>
+              <a href="/author/victor-berger.html">Victor Berger</a>          </li>
+      </ul>
+    </header>
+    <div class="content">
+      <p>Following <a href="/wayland-rs-v-0-20.html">the previous announce of Smithay's Client Toolkit</a>, this
+post aims at giving a general feeling of how this toolkit can be used, and in general how
+Wayland client apps are written. To do so, I'll first recap some general information about
+how Wayland works, and then do a step by step construction of a simple Wayland image viewer
+app.</p>
+<p><center><img alt="The image viewer started in rootson" src="/images/img_viewer.png"></center></p>
+<h2>Some context: how Wayland works</h2>
+<p>Wayland as its core is an object-based message-passing protocol. What I mean by that is that
+a client app will need to connect to a unix socket on which the Wayland server is listening,
+and then, via this socket connection the client will send requests to the server ("I want to
+receive pointer inputs", "I want to draw this", etc...), and receive events from the server
+("The pointer moved to this location", "the user pressed this key", etc...). These messages
+are attached to objects, which are a protocol construct. For example, a client interested in
+receiving pointer inputs will create an instance of the <code>wl_pointer</code> interface (think class),
+and all messages regarding pointer input will be received through this object.</p>
+<p>As said previously, all messages are attached to an object, and objects are created or destroyed
+by messages. Thus all objects are created by messages of another object, which is then its
+parent. This way, we can see the hierarchy of all objects as a tree. At its root there is the
+<code>wl_display</code>. This object is automatically created when the connection is established, and
+represents the connection itself. From the display a client will instantiate the <code>wl_registry</code>,
+which is the real core of the protocol tree.</p>
+<p>Via events associated to this registry, the client will be notified of the existence of various
+global objects. These objects can be instantiated from the registry, and are global in the
+sense that they represent an underlying resource, and no matter how many times you create
+an instance of a global, all these instances represent the same underlying resource.</p>
+<p>There are two kinds of globals:</p>
+<ul>
+<li>Those that represent a capability of the Wayland server. For example the <code>wl_shm</code> reprensents
+  the capability to use shared-memory buffers.</li>
+<li>Those that represent a resource accessible to the compositor. Typically a peripheral (be it
+  physical or logical). These can exist more than one time, for example each monitor connected to
+  the computer will appear in the registry as a <code>wl_output</code> global.</li>
+</ul>
+<p>From these globals, the client can create more objects (each global defining a subtree of
+objects) and send requests and receive events through them. All Wayland interactions
+are done this way.</p>
+<p>The protocol is also extensible: the list of possible interfaces as well as their associated
+requests and events are defined in XML files. There is one defining the core protocol (which
+notably includes the <code>wl_diplay</code> and <code>wl_registry</code> interfaces) that every Wayland server is
+expected to implement. Additional protocol extensions can also be supported, defined in other
+protocol XML files. They appear as more globals in the registry that are simply ingored by
+clients not supporting these extensions.</p>
+<p>With this in mind, let's start writing our app with Smithay's Client Toolkit (that I'll 
+abbreviate as SCTK from now on).</p>
+<h2>A simple app: image viewer</h2>
+<p>Our goal here is to build a very simple client: we will start it from command line
+giving it an image file as argument, and it will just open a window showing this image.
+We'll also make the window resizable, and it will rescale the image appropriately.</p>
+<h3>Image loading</h3>
+<p>The first part or our app is thus loading this image. This is in no way Wayland-specific,
+and we'll just use the <code>image</code> crate for that:</p>
+<div class="highlight"><pre><span></span><code><span class="k">extern</span><span class="w"> </span><span class="k">crate</span><span class="w"> </span><span class="n">image</span><span class="p">;</span><span class="w"></span>
+
+<span class="k">use</span><span class="w"> </span><span class="n">std</span>::<span class="n">env</span><span class="p">;</span><span class="w"></span>
+
+<span class="k">fn</span> <span class="nf">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span><span class="w"></span>
+<span class="w">    </span><span class="c1">// First of all, retrieve the path from the program arguments:</span>
+<span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="n">path</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">match</span><span class="w"> </span><span class="n">env</span>::<span class="n">args_os</span><span class="p">().</span><span class="n">skip</span><span class="p">(</span><span class="mi">1</span><span class="p">).</span><span class="n">next</span><span class="p">()</span><span class="w"> </span><span class="p">{</span><span class="w"></span>
+<span class="w">        </span><span class="nb">Some</span><span class="p">(</span><span class="n">p</span><span class="p">)</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="n">p</span><span class="p">,</span><span class="w"></span>
+<span class="w">        </span><span class="nb">None</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="p">{</span><span class="w"></span>
+<span class="w">            </span><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;USAGE: ./image_wiewer &lt;PATH&gt;&quot;</span><span class="p">);</span><span class="w"></span>
+<span class="w">            </span><span class="k">return</span><span class="p">;</span><span class="w"></span>
+<span class="w">        </span><span class="p">}</span><span class="w"></span>
+<span class="w">    </span><span class="p">};</span><span class="w"></span>
+<span class="w">    </span><span class="c1">// now, try to open the image</span>
+<span class="w">    </span><span class="c1">// the image crate will take care of auto-detecting the file format</span>
+<span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="n">image</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">match</span><span class="w"> </span><span class="n">image</span>::<span class="n">open</span><span class="p">(</span><span class="o">&amp;</span><span class="n">path</span><span class="p">)</span><span class="w"> </span><span class="p">{</span><span class="w"></span>
+<span class="w">        </span><span class="nb">Ok</span><span class="p">(</span><span class="n">i</span><span class="p">)</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="n">i</span><span class="p">,</span><span class="w"></span>
+<span class="w">        </span><span class="nb">Err</span><span class="p">(</span><span class="n">e</span><span class="p">)</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="p">{</span><span class="w"></span>
+<span class="w">            </span><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;Failed to open image {}.&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">path</span><span class="p">.</span><span class="n">to_string_lossy</span><span class="p">());</span><span class="w"></span>
+<span class="w">            </span><span class="fm">println!</span><span class="p">(</span><span class="s">&quot;Error was: {:?}&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">e</span><span class="p">);</span><span class="w"></span>
+<span class="w">            </span><span class="k">return</span><span class="p">;</span><span class="w"></span>
+<span class="w">        </span><span class="p">}</span><span class="w"></span>
+<span class="w">    </span><span class="p">};</span><span class="w"></span>
+<span class="w">    </span><span class="c1">// We&#39;ll need the image in RGBA for drawing it</span>
+<span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="n">image</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">image</span><span class="p">.</span><span class="n">to_rgba</span><span class="p">();</span><span class="w"></span>
+
+<span class="w">    </span><span class="c1">// ...</span>
+<span class="p">}</span><span class="w"></span>
+</code></pre></div>
+
+<p>That was the easy part, we now have the image loaded in memory. Time to initialize the
+Wayland setup.</p>
+<h3>Wayland setup</h3>
+<p>First of all, we need to connect to the Wayland server:</p>
+<div class="highlight"><pre><span></span><code><span class="k">extern</span><span class="w"> </span><span class="k">crate</span><span class="w"> </span><span class="n">smithay</span><span class="o">-</span><span class="n">client</span><span class="o">-</span><span class="n">toolkit</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="n">sctk</span><span class="p">;</span><span class="w"></span>
+<span class="c1">// sctk reexports Wayland-client for convenience</span>
+<span class="k">use</span><span class="w"> </span><span class="n">sctk</span>::<span class="n">reexports</span>::<span class="n">client</span>::<span class="n">Display</span><span class="p">;</span><span class="w"></span>
+
+<span class="k">fn</span> <span class="nf">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span><span class="w"></span>
+<span class="w">    </span><span class="c1">// ...</span>
+
+<span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="p">(</span><span class="n">display</span><span class="p">,</span><span class="w"> </span><span class="k">mut</span><span class="w"> </span><span class="n">event_queue</span><span class="p">)</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">Display</span>::<span class="n">connect_to_env</span><span class="p">()</span><span class="w"></span>
+<span class="w">                                        </span><span class="p">.</span><span class="n">expect</span><span class="p">(</span><span class="s">&quot;Failed to connect to the Wayland server.&quot;</span><span class="p">);</span><span class="w"></span>
+
+<span class="w">    </span><span class="c1">// ...</span>
+<span class="p">}</span><span class="w"></span>
+</code></pre></div>
+
+<p>This <code>connect_to_env()</code> function tells Wayland-client to try to connect to a Wayland
+server according to the configuration of the environment variables. This is what most
+Wayland clients are expected to do.</p>
+<p>Now, from this client, we are supposed to retrieve the <code>wl_registry</code> and process its
+events to retrieve the global list and bind the globals we need. For this, SCTK provides
+us with a first utility that does that for us: <code>sctk::Environment</code>. It takes a registry
+as an argument, wraps it, processes its events and automatically binding the most classic
+globals. This will be sufficient for our example.</p>
+<div class="highlight"><pre><span></span><code><span class="k">use</span><span class="w"> </span><span class="n">sctk</span>::<span class="n">Environment</span><span class="p">;</span><span class="w"></span>
+<span class="c1">// our display object is actually of type `Proxy&lt;WlDisplay&gt;`, so we need to import</span>
+<span class="c1">// this extension trait to access methods representing its requests</span>
+<span class="k">use</span><span class="w"> </span><span class="n">sctk</span>::<span class="n">reexports</span>::<span class="n">client</span>::<span class="n">protocol</span>::<span class="n">wl_display</span>::<span class="n">RequestsTrait</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="n">DisplayRequests</span><span class="p">;</span><span class="w"></span>
+
+<span class="k">fn</span> <span class="nf">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span><span class="w"></span>
+<span class="w">    </span><span class="c1">// ..</span>
+
+<span class="w">    </span><span class="c1">// All request method of Wayland objects return a `Result`, as Wayland-client</span>
+<span class="w">    </span><span class="c1">// returns an error if you try to send a message on an object that has already</span>
+<span class="w">    </span><span class="c1">// been destroyed by a previous message. We know our display has not been</span>
+<span class="w">    </span><span class="c1">// destroyed, so we unwrap().</span>
+<span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="n">registry</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">display</span><span class="p">.</span><span class="n">get_registry</span><span class="p">().</span><span class="n">unwrap</span><span class="p">();</span><span class="w"></span>
+
+<span class="w">    </span><span class="c1">// The Environment takes a registry and a mutable borrow of the Wayland event</span>
+<span class="w">    </span><span class="c1">// queue. It uses the event queue internally to exchange messages with the server</span>
+<span class="w">    </span><span class="c1">// to process the registry event.</span>
+<span class="w">    </span><span class="c1">// Like all manipulation of the event loop, it can fail (if the connection is</span>
+<span class="w">    </span><span class="c1">// unexpectedly lost), and thus returns a Result. This failing would prevent</span>
+<span class="w">    </span><span class="c1">// us to continue though, so we unrap().</span>
+<span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="n">env</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">Environment</span>::<span class="n">from_registry</span><span class="p">(</span><span class="n">registry</span><span class="p">,</span><span class="w"> </span><span class="o">&amp;</span><span class="k">mut</span><span class="w"> </span><span class="n">event_queue</span><span class="p">).</span><span class="n">unwrap</span><span class="p">();</span><span class="w"></span>
+
+<span class="w">    </span><span class="c1">// ..</span>
+<span class="p">}</span><span class="w"></span>
+</code></pre></div>
+
+<p>Once <code>Environment::from_registry(..)</code> returns, we get an already-initialized <code>Environment</code>
+with various Wayland globals already bound, available as public fields. First of all,
+we will use the <code>wl_compositor</code> global to create a <code>wl_surface</code>. The surfaces are the most
+fundamental building block of a Wayland app. It describes a rectangle of pixels to which
+you can attach a <code>wl_buffer</code> defining its contents. A Wayland app is built on surfaces:</p>
+<ul>
+<li>Most often, they can be assigned a role. The most classic one would be "toplevel surface",
+  meaning this surface is actually a window in the traditional sense. But surfaces can also
+  be used to change the image of the mouse pointer for example.</li>
+<li>They can be defined relative to a parent surface (they are then a "subsurface"), this can
+  typically be useful if different parts of your UI are drawn by different means. For example,
+  a video player could use GPU-accelerated routines to decode and display the contents of the
+  video, and draw the rest of its UI using the CPU. Subsurfaces are also what SCTK uses
+  to draw the decorations of your windows, as we'll see later.</li>
+<li>Input information is given relative to surfaces. A Wayland app does not know the absolute location
+  of the pointer for example, but if the pointer is on top of one of its surfaces, it knows its
+  location relative to it.</li>
+</ul>
+<div class="highlight"><pre><span></span><code><span class="c1">// the extension trait providing the requests for the compositor object</span>
+<span class="k">use</span><span class="w"> </span><span class="n">sctk</span>::<span class="n">reexports</span>::<span class="n">client</span>::<span class="n">protocol</span>::<span class="n">wl_compositor</span>::<span class="n">RequestsTrait</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="n">CompositorRequests</span><span class="p">;</span><span class="w"></span>
+
+<span class="k">fn</span> <span class="nf">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span><span class="w"></span>
+<span class="w">    </span><span class="c1">// ..</span>
+
+<span class="w">    </span><span class="c1">// Use the compositor global to create a new surface</span>
+<span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="n">surface</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">env</span><span class="p">.</span><span class="n">compositor</span><span class="w"></span>
+<span class="w">        </span><span class="p">.</span><span class="n">create_surface</span><span class="p">()</span><span class="w"></span>
+<span class="w">        </span><span class="p">.</span><span class="n">unwrap</span><span class="p">()</span><span class="w"> </span><span class="c1">// unwrap for the same reasons as before, we know the compositor</span>
+<span class="w">                  </span><span class="c1">// is not yet destroyed</span>
+<span class="w">        </span><span class="p">.</span><span class="n">implement</span><span class="p">(</span><span class="o">|</span><span class="n">_event</span><span class="p">,</span><span class="w"> </span><span class="n">_surface</span><span class="o">|</span><span class="w"> </span><span class="p">{</span><span class="w"></span>
+<span class="w">            </span><span class="c1">// Here we implement this surface with a closure processing</span>
+<span class="w">            </span><span class="c1">// the event</span>
+<span class="w">            </span><span class="c1">//</span>
+<span class="w">            </span><span class="c1">// Surface events notify us when it enters or leave an output,</span>
+<span class="w">            </span><span class="c1">// this is mostly useful to track HiDPI-scaling.</span>
+<span class="w">            </span><span class="c1">//</span>
+<span class="w">            </span><span class="c1">// We don&#39;t do it in this example, so this closure ignores all</span>
+<span class="w">            </span><span class="c1">// events by doing nothing.</span>
+<span class="w">        </span><span class="p">});</span><span class="w"></span>
+
+<span class="w">    </span><span class="c1">// ..</span>
+<span class="p">}</span><span class="w"></span>
+</code></pre></div>
+
+<p>Once this surface exists, we'll use it as the main surface of our app, the one
+on which we'll draw the image we loaded earlier. However, we must first declare that
+this surface will be our main surface, by assigning it the "toplevel surface" role.</p>
+<p>SCTK provides a convenience type named <code>Window</code>, which handles this for us, as well as
+a few other things:</p>
+<ul>
+<li>it draws decorations around our surface to make it look like a window (the grey
+  borders you saw in the screenshot above)</li>
+<li>it processes most of the shell interaction for us (maximizing/minimizing, etc..)</li>
+</ul>
+<p>But it cannot do everything, and requires us to provide a callback to which some
+events will be given that we'll process ourselves.</p>
+<div class="highlight"><pre><span></span><code><span class="k">use</span><span class="w"> </span><span class="n">sctk</span>::<span class="n">window</span>::<span class="p">{</span><span class="n">BasicFrame</span><span class="p">,</span><span class="w"> </span><span class="n">Event</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="n">WEvent</span><span class="p">,</span><span class="w"> </span><span class="n">State</span><span class="p">,</span><span class="w"> </span><span class="n">Window</span><span class="p">};</span><span class="w"></span>
+
+<span class="k">fn</span> <span class="nf">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span><span class="w"></span>
+<span class="w">    </span><span class="c1">// ..</span>
+
+<span class="w">    </span><span class="c1">// First of all, this Arc&lt;Mutex&lt;Option&lt;WEvent&gt;&gt;&gt; will store</span>
+<span class="w">    </span><span class="c1">// any event from the window that we need to process. We</span>
+<span class="w">    </span><span class="c1">// store them and will process them later in the event loop</span>
+<span class="w">    </span><span class="c1">// rather that process them directly because in a batch of</span>
+<span class="w">    </span><span class="c1">// generated events, often only the last one needs to actually</span>
+<span class="w">    </span><span class="c1">// be processed, and some events may render other obsoletes.</span>
+<span class="w">    </span><span class="c1">// See the closure a few lines below for details</span>
+<span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="n">next_action</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">Arc</span>::<span class="n">new</span><span class="p">(</span><span class="n">Mutex</span>::<span class="n">new</span><span class="p">(</span><span class="nb">None</span>::<span class="o">&lt;</span><span class="n">WEvent</span><span class="o">&gt;</span><span class="p">));</span><span class="w"></span>
+
+<span class="w">    </span><span class="c1">// We clone the arc to pass one end to the closure</span>
+<span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="n">waction</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">next_action</span><span class="p">.</span><span class="n">clone</span><span class="p">();</span><span class="w"></span>
+<span class="w">    </span><span class="c1">// Now we actually create the window. The type parameter `BasicFrame` here</span>
+<span class="w">    </span><span class="c1">// specifies the type we want to use to draw the borders. SCTK currently</span>
+<span class="w">    </span><span class="c1">// only provide this one, but if you don&#39;t like the (arguably ugly)</span>
+<span class="w">    </span><span class="c1">// borders it draws, you just need to implement the appropriate trait</span>
+<span class="w">    </span><span class="c1">// to create your own.</span>
+<span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="k">mut</span><span class="w"> </span><span class="n">window</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">Window</span>::<span class="o">&lt;</span><span class="n">BasicFrame</span><span class="o">&gt;</span>::<span class="n">init</span><span class="p">(</span><span class="w"></span>
+<span class="w">        </span><span class="n">surface</span><span class="p">,</span><span class="w">           </span><span class="c1">// the wl_surface that serves as the basis of this window</span>
+<span class="w">        </span><span class="n">image</span><span class="p">.</span><span class="n">dimensions</span><span class="p">(),</span><span class="c1">// the initial internal dimensions of the window (so excluding decorations)</span>
+<span class="w">        </span><span class="o">&amp;</span><span class="n">env</span><span class="p">.</span><span class="n">compositor</span><span class="p">,</span><span class="w">   </span><span class="c1">// -+</span>
+<span class="w">        </span><span class="o">&amp;</span><span class="n">env</span><span class="p">.</span><span class="n">subcompositor</span><span class="p">,</span><span class="c1">//  | The Window constructor needs access to these globals</span>
+<span class="w">        </span><span class="o">&amp;</span><span class="n">env</span><span class="p">.</span><span class="n">shm</span><span class="p">,</span><span class="w">          </span><span class="c1">//  | to initialize the window</span>
+<span class="w">        </span><span class="o">&amp;</span><span class="n">env</span><span class="p">.</span><span class="n">shell</span><span class="p">,</span><span class="w">        </span><span class="c1">// -+</span>
+<span class="w">        </span><span class="k">move</span><span class="w"> </span><span class="o">|</span><span class="n">evt</span><span class="p">,</span><span class="w"> </span><span class="p">()</span><span class="o">|</span><span class="w"> </span><span class="p">{</span><span class="w"></span>
+<span class="w">            </span><span class="c1">// This is the closure that processes the Window events.</span>
+<span class="w">            </span><span class="c1">// There are 3 possible events:</span>
+<span class="w">            </span><span class="c1">// - Close: the user requested the window to be closed, we&#39;ll then quit</span>
+<span class="w">            </span><span class="c1">// - Configure: the server suggested a new state for the window (possibly</span>
+<span class="w">            </span><span class="c1">//   a new size if a resize is in progress). We&#39;ll likely need to redraw</span>
+<span class="w">            </span><span class="c1">//   our contents</span>
+<span class="w">            </span><span class="c1">// - Refresh: the frame itself needs to be redrawn. SCTK does not do this</span>
+<span class="w">            </span><span class="c1">//   automatically because it has a cost and should only be done in parts</span>
+<span class="w">            </span><span class="c1">//   of the event loop where the client actually wants to draw</span>
+<span class="w">            </span><span class="c1">// Here we actually only keep the last event received according to a priority</span>
+<span class="w">            </span><span class="c1">// order of Close &gt; Configure &gt; Refresh.</span>
+<span class="w">            </span><span class="c1">// Indeed, if we received a Close, there is not point drawing anything anymore as</span>
+<span class="w">            </span><span class="c1">// we will exit. A new Configure overrides a previous one, and if we received</span>
+<span class="w">            </span><span class="c1">// a Configure we will refresh the frame anyway.</span>
+<span class="w">            </span><span class="kd">let</span><span class="w"> </span><span class="k">mut</span><span class="w"> </span><span class="n">next_action</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">waction</span><span class="p">.</span><span class="n">lock</span><span class="p">().</span><span class="n">unwrap</span><span class="p">();</span><span class="w"></span>
+<span class="w">            </span><span class="c1">// Check if we need to replace the old event by the new one</span>
+<span class="w">            </span><span class="kd">let</span><span class="w"> </span><span class="n">replace</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">match</span><span class="w"> </span><span class="p">(</span><span class="o">&amp;</span><span class="n">evt</span><span class="p">,</span><span class="w"> </span><span class="o">&amp;*</span><span class="n">next_action</span><span class="p">)</span><span class="w"> </span><span class="p">{</span><span class="w"></span>
+<span class="w">                </span><span class="c1">// replace if there is no old event</span>
+<span class="w">                </span><span class="p">(</span><span class="n">_</span><span class="p">,</span><span class="w"> </span><span class="o">&amp;</span><span class="nb">None</span><span class="p">)</span><span class="w"></span>
+<span class="w">                </span><span class="c1">// or the old event is refresh</span>
+<span class="w">                </span><span class="o">|</span><span class="w"> </span><span class="p">(</span><span class="n">_</span><span class="p">,</span><span class="w"> </span><span class="o">&amp;</span><span class="nb">Some</span><span class="p">(</span><span class="n">WEvent</span>::<span class="n">Refresh</span><span class="p">))</span><span class="w"></span>
+<span class="w">                </span><span class="c1">// or we had a configure and received a new one</span>
+<span class="w">                </span><span class="o">|</span><span class="w"> </span><span class="p">(</span><span class="o">&amp;</span><span class="n">WEvent</span>::<span class="n">Configure</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="o">..</span><span class="w"> </span><span class="p">},</span><span class="w"> </span><span class="o">&amp;</span><span class="nb">Some</span><span class="p">(</span><span class="n">WEvent</span>::<span class="n">Configure</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="o">..</span><span class="w"> </span><span class="p">}))</span><span class="w"></span>
+<span class="w">                </span><span class="c1">// or the new event is close</span>
+<span class="w">                </span><span class="o">|</span><span class="w"> </span><span class="p">(</span><span class="o">&amp;</span><span class="n">WEvent</span>::<span class="n">Close</span><span class="p">,</span><span class="w"> </span><span class="n">_</span><span class="p">)</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span><span class="w"></span>
+<span class="w">                </span><span class="c1">// keep the old event otherwise</span>
+<span class="w">                </span><span class="n">_</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="kc">false</span><span class="p">,</span><span class="w"></span>
+<span class="w">            </span><span class="p">};</span><span class="w"></span>
+<span class="w">            </span><span class="k">if</span><span class="w"> </span><span class="n">replace</span><span class="w"> </span><span class="p">{</span><span class="w"></span>
+<span class="w">                </span><span class="o">*</span><span class="n">next_action</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nb">Some</span><span class="p">(</span><span class="n">evt</span><span class="p">);</span><span class="w"></span>
+<span class="w">            </span><span class="p">}</span><span class="w"></span>
+<span class="w">        </span><span class="p">},</span><span class="w"></span>
+<span class="w">        </span><span class="c1">// creating the window may fail if the code drawing the frame</span>
+<span class="w">        </span><span class="c1">// fails to initialize itself. For BasicFrame this should not happen</span>
+<span class="w">        </span><span class="c1">// unless the system is utterly broken, though.</span>
+<span class="w">    </span><span class="p">).</span><span class="n">expect</span><span class="p">(</span><span class="s">&quot;Failed to create a window !&quot;</span><span class="p">);</span><span class="w"></span>
+
+<span class="w">    </span><span class="c1">// The window needs access to pointer inputs to handle the user interaction</span>
+<span class="w">    </span><span class="c1">// with it: resizing/moving the window, or clicking its button.</span>
+<span class="w">    </span><span class="c1">// user interaction in Wayland is done via the wl_seat object, which represents</span>
+<span class="w">    </span><span class="c1">// a set of pointer/keyboard/touchscreen (some may be absent) that logically</span>
+<span class="w">    </span><span class="c1">// represent a single user. Most systems have only one seat, multi-seat configurations</span>
+<span class="w">    </span><span class="c1">// are quite exotic.</span>
+<span class="w">    </span><span class="c1">// Thus, we just automatically bind the first seat we find.</span>
+<span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="n">seat</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">env</span><span class="p">.</span><span class="n">manager</span><span class="w"></span>
+<span class="w">        </span><span class="p">.</span><span class="n">instantiate_auto</span>::<span class="o">&lt;</span><span class="n">wl_seat</span>::<span class="n">WlSeat</span><span class="o">&gt;</span><span class="p">()</span><span class="w"></span>
+<span class="w">        </span><span class="p">.</span><span class="n">unwrap</span><span class="p">()</span><span class="w"></span>
+<span class="w">        </span><span class="p">.</span><span class="n">implement</span><span class="p">(</span><span class="k">move</span><span class="w"> </span><span class="o">|</span><span class="n">_</span><span class="p">,</span><span class="w"> </span><span class="n">_</span><span class="o">|</span><span class="w"> </span><span class="p">{});</span><span class="w"></span>
+<span class="w">    </span><span class="c1">// And advertize it to the Window so it knows of it and can process the</span>
+<span class="w">    </span><span class="c1">// required pointer events.</span>
+<span class="w">    </span><span class="n">window</span><span class="p">.</span><span class="n">new_seat</span><span class="p">(</span><span class="o">&amp;</span><span class="n">seat</span><span class="p">);</span><span class="w"></span>
+
+<span class="w">    </span><span class="c1">// ..</span>
+<span class="p">}</span><span class="w"></span>
+</code></pre></div>
+
+<p>At this point, we have created most of the Wayland objects we'll need for this app.
+It's time to jump to the next step:</p>
+<h3>Drawing the contents</h3>
+<p>In here we'll intialize a few more resources we need to do our drawing, and define
+a function that redraws our window for a given size, resizing the loaded image if
+necessary.</p>
+<p>Defining the contents of a surfaces is done in Wayland by first drawing the content,
+creating a <code>wl_buffer</code> referencing this content, and then attaching the buffer to the
+surface. The two main ways of sharing buffers is via OpenGL or shared memory
+in case of CPU drawing. We'll stick to manually writing the pixels for this app.</p>
+<p>A shared memory pool in Wayland context is just a file (more precisely a tempfile that
+exists only in memory, not on disk) into which the client writes some content. The client
+then shares the file descriptor with the server, and when creating a buffer, specifies that
+the buffer refers to a certain set of pixels in the file. The server will then just read these
+pixels in the shared file to know the contents of the surface this buffer was attached to.</p>
+<p>Now, there is an obvious possibility of race if the client writes the file at the same
+time as the server reads it. To handle this, the server actually sends an event on the
+buffer to notify that it has finished reading the contents associated with the buffer.
+The client is expected to manage the double-buffering accordingly.</p>
+<p>For this purpose, SCTK provides two tools. The first is <code>MemPool</code>, which is an abstraction
+over a shared memory pool, managing the transmission of the shared file to the server.
+The second one is <code>DoubleMemPool</code>. As you may guess, this holds two <code>MemPool</code>. It gives
+you access to one of them, and a way to swap them. A small convenience for doing
+double-buffering.</p>
+<p>Creating our <code>DoubleMemPool</code> is quite simple:</p>
+<div class="highlight"><pre><span></span><code><span class="k">use</span><span class="w"> </span><span class="n">sctk</span>::<span class="n">utils</span>::<span class="n">DoubleMemPool</span><span class="p">;</span><span class="w"></span>
+
+<span class="k">fn</span> <span class="nf">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span><span class="w"></span>
+<span class="w">    </span><span class="c1">// ...</span>
+
+<span class="w">    </span><span class="c1">// DoubleMemPool::new() requires access to the wl_shm global, which represents</span>
+<span class="w">    </span><span class="c1">// the capability of the server to use shared memory (SHM). All Wayland servers</span>
+<span class="w">    </span><span class="c1">// are required to support it.</span>
+<span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="k">mut</span><span class="w"> </span><span class="n">pools</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">DoubleMemPool</span>::<span class="n">new</span><span class="p">(</span><span class="o">&amp;</span><span class="n">env</span><span class="p">.</span><span class="n">shm</span><span class="p">).</span><span class="n">expect</span><span class="p">(</span><span class="s">&quot;Failed to create the memory pools.&quot;</span><span class="p">);</span><span class="w"></span>
+
+<span class="w">    </span><span class="c1">// ...</span>
+<span class="p">}</span><span class="w"></span>
+</code></pre></div>
+
+<p>We will now write a utility function that will do the drawing itself. Taking a mutable
+borrow of a <code>MemPool</code>, a reference of our image, and the target dimensions, it will resize
+the image to these dimensions, write it to the memory pool, and return a new buffer to
+the newly drawn contents. We'll actually manage the double buffering in the event loop.</p>
+<div class="highlight"><pre><span></span><code><span class="k">extern</span><span class="w"> </span><span class="k">crate</span><span class="w"> </span><span class="n">byteorder</span><span class="p">;</span><span class="w"></span>
+<span class="c1">// IO types to write the memory pool</span>
+<span class="k">use</span><span class="w"> </span><span class="n">std</span>::<span class="n">io</span>::<span class="p">{</span><span class="n">BufWriter</span><span class="p">,</span><span class="w"> </span><span class="n">Seek</span><span class="p">,</span><span class="w"> </span><span class="n">SeekFrom</span><span class="p">,</span><span class="w"> </span><span class="n">Write</span><span class="p">};</span><span class="w"></span>
+<span class="k">use</span><span class="w"> </span><span class="n">byteorder</span>::<span class="p">{</span><span class="n">NativeEndian</span><span class="p">,</span><span class="w"> </span><span class="n">WriteBytesExt</span><span class="p">};</span><span class="w"></span>
+
+<span class="k">use</span><span class="w"> </span><span class="n">sctk</span>::<span class="n">reexports</span>::<span class="n">client</span>::<span class="n">NewProxy</span><span class="p">;</span><span class="w"></span>
+<span class="k">use</span><span class="w"> </span><span class="n">sctk</span>::<span class="n">reexports</span>::<span class="n">client</span>::<span class="n">protocol</span>::<span class="n">wl_buffer</span><span class="p">;</span><span class="w"></span>
+<span class="k">use</span><span class="w"> </span><span class="n">sctk</span>::<span class="n">utils</span>::<span class="n">MemPool</span><span class="p">;</span><span class="w"></span>
+
+<span class="c1">// The draw function, which draws `base_image` in the provided `MemPool`,</span>
+<span class="c1">// at given dimensions, and returns a wl_buffer to it.</span>
+<span class="c1">//</span>
+<span class="c1">// It simply returns the `NewProxy`, as we&#39;ll take care of implementing the</span>
+<span class="c1">// wl_buffer outside of this function.</span>
+<span class="c1">//</span>
+<span class="c1">// If `base_image` is `None`, it&#39;ll just draw black contents. This is to</span>
+<span class="c1">// improve performance during resizing: we need to redraw the window frequently</span>
+<span class="c1">// so that its dimensions follow the pointer during the resizing, but resizing the</span>
+<span class="c1">// image is costly and long. So during an interactive resize of the window we&#39;ll</span>
+<span class="c1">// just draw black contents to not feel laggy.</span>
+<span class="k">fn</span> <span class="nf">draw</span><span class="p">(</span><span class="w"></span>
+<span class="w">    </span><span class="n">pool</span>: <span class="kp">&amp;</span><span class="nc">mut</span><span class="w"> </span><span class="n">MemPool</span><span class="p">,</span><span class="w"></span>
+<span class="w">    </span><span class="n">base_image</span>: <span class="nb">Option</span><span class="o">&lt;&amp;</span><span class="n">image</span>::<span class="n">ImageBuffer</span><span class="o">&lt;</span><span class="n">image</span>::<span class="n">Rgba</span><span class="o">&lt;</span><span class="kt">u8</span><span class="o">&gt;</span><span class="p">,</span><span class="w"> </span><span class="nb">Vec</span><span class="o">&lt;</span><span class="kt">u8</span><span class="o">&gt;&gt;&gt;</span><span class="p">,</span><span class="w"></span>
+<span class="w">    </span><span class="p">(</span><span class="n">buf_x</span><span class="p">,</span><span class="w"> </span><span class="n">buf_y</span><span class="p">)</span>: <span class="p">(</span><span class="kt">u32</span><span class="p">,</span><span class="w"> </span><span class="kt">u32</span><span class="p">),</span><span class="w"></span>
+<span class="p">)</span><span class="w"> </span>-&gt; <span class="nc">NewProxy</span><span class="o">&lt;</span><span class="n">wl_buffer</span>::<span class="n">WlBuffer</span><span class="o">&gt;</span><span class="w"> </span><span class="p">{</span><span class="w"></span>
+<span class="w">    </span><span class="c1">// First of all, we make sure the pool is big enough to hold our</span>
+<span class="w">    </span><span class="c1">// image. We&#39;ll write in ARGB8888 format, meaning 4 bytes per pixel.</span>
+<span class="w">    </span><span class="c1">// This resize method will only resize the pool if the requested size is bigger</span>
+<span class="w">    </span><span class="c1">// than the current size, as Wayland SHM pools are not allowed to shrink.</span>
+<span class="w">    </span><span class="c1">//</span>
+<span class="w">    </span><span class="c1">// While writing on the file would automatically grow it, we need to advertize the</span>
+<span class="w">    </span><span class="c1">// server of its new size, so the call to this method is necessary.</span>
+<span class="w">    </span><span class="n">pool</span><span class="p">.</span><span class="n">resize</span><span class="p">((</span><span class="mi">4</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">buf_x</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">buf_y</span><span class="p">)</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="kt">usize</span><span class="p">)</span><span class="w"></span>
+<span class="w">        </span><span class="p">.</span><span class="n">expect</span><span class="p">(</span><span class="s">&quot;Failed to resize the memory pool.&quot;</span><span class="p">);</span><span class="w"></span>
+
+<span class="w">    </span><span class="c1">// Now, we can write the contents. MemPool implements the `Seek` and `Write` traits,</span>
+<span class="w">    </span><span class="c1">// so we use it directly as a file to write on.</span>
+
+<span class="w">    </span><span class="c1">// First, seek to the beginning, to overwrite our previous content.</span>
+<span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="n">_</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">pool</span><span class="p">.</span><span class="n">seek</span><span class="p">(</span><span class="n">SeekFrom</span>::<span class="n">Start</span><span class="p">(</span><span class="mi">0</span><span class="p">));</span><span class="w"></span>
+<span class="w">    </span><span class="p">{</span><span class="w"></span>
+<span class="w">        </span><span class="c1">// A sub-scope to limit our borrow of the pool by this BufWriter.</span>
+<span class="w">        </span><span class="c1">// This BufWriter will significantly improve our drawing performance,</span>
+<span class="w">        </span><span class="c1">// by reducing the number of syscals we do. =)</span>
+<span class="w">        </span><span class="kd">let</span><span class="w"> </span><span class="k">mut</span><span class="w"> </span><span class="n">writer</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">BufWriter</span>::<span class="n">new</span><span class="p">(</span><span class="o">&amp;</span><span class="k">mut</span><span class="w"> </span><span class="o">*</span><span class="n">pool</span><span class="p">);</span><span class="w"></span>
+<span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="kd">let</span><span class="w"> </span><span class="nb">Some</span><span class="p">(</span><span class="n">base_image</span><span class="p">)</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">base_image</span><span class="w"> </span><span class="p">{</span><span class="w"></span>
+<span class="w">            </span><span class="c1">// We have an image to draw</span>
+
+<span class="w">            </span><span class="c1">// first, resize it to the requested size. We just use the function provided</span>
+<span class="w">            </span><span class="c1">// by the image crate here.</span>
+<span class="w">            </span><span class="kd">let</span><span class="w"> </span><span class="n">image</span><span class="w"> </span><span class="o">=</span><span class="w"></span>
+<span class="w">                </span><span class="n">image</span>::<span class="n">imageops</span>::<span class="n">resize</span><span class="p">(</span><span class="n">base_image</span><span class="p">,</span><span class="w"> </span><span class="n">buf_x</span><span class="p">,</span><span class="w"> </span><span class="n">buf_y</span><span class="p">,</span><span class="w"> </span><span class="n">image</span>::<span class="n">FilterType</span>::<span class="n">Nearest</span><span class="p">);</span><span class="w"></span>
+
+<span class="w">            </span><span class="c1">// Now, we&#39;ll write the pixels of the image to the MemPool.</span>
+<span class="w">            </span><span class="c1">//</span>
+<span class="w">            </span><span class="c1">// We do this in an horribly inneficient maneer, for the sake of simplicity.</span>
+<span class="w">            </span><span class="c1">// We&#39;ll send pixels to the server in ARGB8888 format (this is one of the only</span>
+<span class="w">            </span><span class="c1">// formats that are guaranteed to be supported), but image provides it in</span>
+<span class="w">            </span><span class="c1">// RGBA8888, so we need to do the conversion.</span>
+<span class="w">            </span><span class="c1">//</span>
+<span class="w">            </span><span class="c1">// Additionnaly, if the image has some transparent parts, we&#39;ll blend them into</span>
+<span class="w">            </span><span class="c1">// a white background, otherwise the server will draw our window with a</span>
+<span class="w">            </span><span class="c1">// transparent background!</span>
+<span class="w">            </span><span class="k">for</span><span class="w"> </span><span class="n">pixel</span><span class="w"> </span><span class="k">in</span><span class="w"> </span><span class="n">image</span><span class="p">.</span><span class="n">pixels</span><span class="p">()</span><span class="w"> </span><span class="p">{</span><span class="w"></span>
+<span class="w">                </span><span class="c1">// retrieve the pixel values</span>
+<span class="w">                </span><span class="kd">let</span><span class="w"> </span><span class="n">r</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">pixel</span><span class="p">.</span><span class="n">data</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="kt">u32</span><span class="p">;</span><span class="w"></span>
+<span class="w">                </span><span class="kd">let</span><span class="w"> </span><span class="n">g</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">pixel</span><span class="p">.</span><span class="n">data</span><span class="p">[</span><span class="mi">1</span><span class="p">]</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="kt">u32</span><span class="p">;</span><span class="w"></span>
+<span class="w">                </span><span class="kd">let</span><span class="w"> </span><span class="n">b</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">pixel</span><span class="p">.</span><span class="n">data</span><span class="p">[</span><span class="mi">2</span><span class="p">]</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="kt">u32</span><span class="p">;</span><span class="w"></span>
+<span class="w">                </span><span class="kd">let</span><span class="w"> </span><span class="n">a</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">pixel</span><span class="p">.</span><span class="n">data</span><span class="p">[</span><span class="mi">3</span><span class="p">]</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="kt">u32</span><span class="p">;</span><span class="w"></span>
+<span class="w">                </span><span class="c1">// blend them</span>
+<span class="w">                </span><span class="kd">let</span><span class="w"> </span><span class="n">r</span><span class="w"> </span><span class="o">=</span><span class="w"> </span>::<span class="n">std</span>::<span class="n">cmp</span>::<span class="n">min</span><span class="p">(</span><span class="mh">0xFF</span><span class="p">,</span><span class="w"> </span><span class="p">(</span><span class="mh">0xFF</span><span class="o">*</span><span class="p">(</span><span class="mh">0xFF</span><span class="o">-</span><span class="n">a</span><span class="p">)</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">a</span><span class="o">*</span><span class="n">r</span><span class="p">)</span><span class="o">/</span><span class="mh">0xFF</span><span class="p">);</span><span class="w"></span>
+<span class="w">                </span><span class="kd">let</span><span class="w"> </span><span class="n">g</span><span class="w"> </span><span class="o">=</span><span class="w"> </span>::<span class="n">std</span>::<span class="n">cmp</span>::<span class="n">min</span><span class="p">(</span><span class="mh">0xFF</span><span class="p">,</span><span class="w"> </span><span class="p">(</span><span class="mh">0xFF</span><span class="o">*</span><span class="p">(</span><span class="mh">0xFF</span><span class="o">-</span><span class="n">a</span><span class="p">)</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">a</span><span class="o">*</span><span class="n">g</span><span class="p">)</span><span class="o">/</span><span class="mh">0xFF</span><span class="p">);</span><span class="w"></span>
+<span class="w">                </span><span class="kd">let</span><span class="w"> </span><span class="n">b</span><span class="w"> </span><span class="o">=</span><span class="w"> </span>::<span class="n">std</span>::<span class="n">cmp</span>::<span class="n">min</span><span class="p">(</span><span class="mh">0xFF</span><span class="p">,</span><span class="w"> </span><span class="p">(</span><span class="mh">0xFF</span><span class="o">*</span><span class="p">(</span><span class="mh">0xFF</span><span class="o">-</span><span class="n">a</span><span class="p">)</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">a</span><span class="o">*</span><span class="n">b</span><span class="p">)</span><span class="o">/</span><span class="mh">0xFF</span><span class="p">);</span><span class="w"></span>
+<span class="w">                </span><span class="c1">// write the pixel</span>
+<span class="w">                </span><span class="c1">// We use byteorder, as the Wayland protocol explicitly specifies</span>
+<span class="w">                </span><span class="c1">// that the pixels must be written in native endianness</span>
+<span class="w">                </span><span class="kd">let</span><span class="w"> </span><span class="n">_</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">writer</span><span class="p">.</span><span class="n">write_u32</span>::<span class="o">&lt;</span><span class="n">NativeEndian</span><span class="o">&gt;</span><span class="p">(</span><span class="w"></span>
+<span class="w">                    </span><span class="p">(</span><span class="mh">0xFF</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="mi">24</span><span class="p">)</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="p">(</span><span class="n">r</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="mi">16</span><span class="p">)</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="p">(</span><span class="n">g</span><span class="w"> </span><span class="o">&lt;&lt;</span><span class="w"> </span><span class="mi">8</span><span class="p">)</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">b</span><span class="w"></span>
+<span class="w">                </span><span class="p">);</span><span class="w"></span>
+<span class="w">            </span><span class="p">}</span><span class="w"></span>
+<span class="w">        </span><span class="p">}</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="p">{</span><span class="w"></span>
+<span class="w">            </span><span class="c1">// We do not have any image to draw, so we draw black contents</span>
+<span class="w">            </span><span class="k">for</span><span class="w"> </span><span class="n">_</span><span class="w"> </span><span class="k">in</span><span class="w"> </span><span class="mi">0</span><span class="o">..</span><span class="p">(</span><span class="n">buf_x</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">buf_y</span><span class="p">)</span><span class="w"> </span><span class="p">{</span><span class="w"></span>
+<span class="w">                </span><span class="kd">let</span><span class="w"> </span><span class="n">_</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">writer</span><span class="p">.</span><span class="n">write_u32</span>::<span class="o">&lt;</span><span class="n">NativeEndian</span><span class="o">&gt;</span><span class="p">(</span><span class="mh">0xFF000000</span><span class="p">);</span><span class="w"></span>
+<span class="w">            </span><span class="p">}</span><span class="w"></span>
+<span class="w">        </span><span class="p">}</span><span class="w"></span>
+<span class="w">        </span><span class="c1">// Don&#39;t forget to flush the writer, to make sure all the contents are</span>
+<span class="w">        </span><span class="c1">// indeed written to the file.</span>
+<span class="w">        </span><span class="kd">let</span><span class="w"> </span><span class="n">_</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">writer</span><span class="p">.</span><span class="n">flush</span><span class="p">();</span><span class="w"></span>
+<span class="w">    </span><span class="p">}</span><span class="w"></span>
+<span class="w">    </span><span class="c1">// Now, we create a buffer to the memory pool pointing to the contents</span>
+<span class="w">    </span><span class="c1">// we just wrote</span>
+<span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="n">pool</span><span class="p">.</span><span class="n">buffer</span><span class="p">(</span><span class="w"></span>
+<span class="w">        </span><span class="mi">0</span><span class="p">,</span><span class="w">                       </span><span class="c1">// initial offset of the buffer in the pool</span>
+<span class="w">        </span><span class="n">buf_x</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="kt">i32</span><span class="p">,</span><span class="w">            </span><span class="c1">// width of the buffer, in pixels</span>
+<span class="w">        </span><span class="n">buf_y</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="kt">i32</span><span class="p">,</span><span class="w">            </span><span class="c1">// height of the buffer, in pixels</span>
+<span class="w">        </span><span class="mi">4</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">buf_x</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="kt">i32</span><span class="p">,</span><span class="w">        </span><span class="c1">// stride: number of bytes between the start of two</span>
+<span class="w">                                 </span><span class="c1">//   consecutive rows of pixels</span>
+<span class="w">        </span><span class="n">wl_shm</span>::<span class="n">Format</span>::<span class="n">Argb8888</span><span class="p">,</span><span class="c1">// the pixel format we wrote in</span>
+<span class="w">    </span><span class="p">)</span><span class="w"></span>
+<span class="p">}</span><span class="w"></span>
+</code></pre></div>
+
+<p>We now have all the parts in place to start running our app, time to write the event loop.</p>
+<h3>The event loop</h3>
+<p>As our app has very little room for user input (we handle nothing except the window being
+resized), our event loop will also be quite simple. It needs to:</p>
+<ul>
+<li>check the received events to know if we should quit or redraw</li>
+<li>redraw and/or refresh the frame if necessary</li>
+<li>call the methods of the Wayland event queue to ensure proper processing of the messages</li>
+</ul>
+<div class="highlight"><pre><span></span><code><span class="k">fn</span> <span class="nf">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span><span class="w"></span>
+<span class="w">    </span><span class="c1">// ...</span>
+
+<span class="w">    </span><span class="c1">// First, we initialize a few boolean flags that we&#39;ll use to track our state:</span>
+<span class="w">    </span><span class="c1">// - the window needs to be redrawn</span>
+<span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="k">mut</span><span class="w"> </span><span class="n">need_redraw</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">false</span><span class="p">;</span><span class="w"></span>
+<span class="w">    </span><span class="c1">// - the frame needs to be refreshed</span>
+<span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="k">mut</span><span class="w"> </span><span class="n">need_refresh</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">false</span><span class="p">;</span><span class="w"></span>
+<span class="w">    </span><span class="c1">// - have we done the original bootstrap? Depending on the underlying shell</span>
+<span class="w">    </span><span class="c1">//   protocol, we may need to wait until we receive a first configure event</span>
+<span class="w">    </span><span class="c1">//   before drawing our window. This flag checks if this is done.</span>
+<span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="k">mut</span><span class="w"> </span><span class="n">bootstrapped</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">false</span><span class="p">;</span><span class="w"></span>
+<span class="w">    </span><span class="c1">// - number of currently free memory pool, which will be shared by the buffer</span>
+<span class="w">    </span><span class="c1">//   implementations</span>
+<span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="n">free_pools</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">Rc</span>::<span class="n">new</span><span class="p">(</span><span class="n">Cell</span>::<span class="n">new</span><span class="p">(</span><span class="mi">2</span><span class="k">u32</span><span class="p">));</span><span class="w"></span>
+<span class="w">    </span><span class="c1">// - are we currently in the process of being resized? (to draw the image or</span>
+<span class="w">    </span><span class="c1">//   black content)</span>
+<span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="k">mut</span><span class="w"> </span><span class="n">resizing</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">false</span><span class="p">;</span><span class="w"></span>
+<span class="w">    </span><span class="c1">// - a QueueToken, we&#39;ll need it to implement the buffers</span>
+<span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="n">token</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">event_queue</span><span class="p">.</span><span class="n">get_token</span><span class="p">();</span><span class="w"></span>
+<span class="w">    </span><span class="c1">// - the size of our contents</span>
+<span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="k">mut</span><span class="w"> </span><span class="n">dimensions</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">image</span><span class="p">.</span><span class="n">dimensions</span><span class="p">();</span><span class="w"></span>
+
+<span class="w">    </span><span class="c1">// if our shell does not need to wait for a configure event, we draw right away.</span>
+<span class="w">    </span><span class="c1">//</span>
+<span class="w">    </span><span class="c1">// Note that this is only the case for the old wl_shell protocol, which is now</span>
+<span class="w">    </span><span class="c1">// deprecated. This code is only for compatibility with old servers that do not</span>
+<span class="w">    </span><span class="c1">// support the new standard xdg_shell protocol.</span>
+<span class="w">    </span><span class="c1">//</span>
+<span class="w">    </span><span class="c1">// But if we have made a fallback to wl_shell, we need to draw right away because we&#39;ll</span>
+<span class="w">    </span><span class="c1">// never receive a configure event if we don&#39;t draw something...</span>
+<span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="o">!</span><span class="n">env</span><span class="p">.</span><span class="n">shell</span><span class="p">.</span><span class="n">needs_configure</span><span class="p">()</span><span class="w"> </span><span class="p">{</span><span class="w"></span>
+<span class="w">        </span><span class="n">need_redraw</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span><span class="p">;</span><span class="w"></span>
+<span class="w">        </span><span class="n">bootstrapped</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span><span class="p">;</span><span class="w"></span>
+<span class="w">    </span><span class="p">}</span><span class="w"></span>
+
+<span class="w">    </span><span class="c1">// We can now actually enter the event loop!</span>
+<span class="w">    </span><span class="k">loop</span><span class="w"> </span><span class="p">{</span><span class="w"></span>
+<span class="w">        </span><span class="c1">// First, check if any pending action was received by the</span>
+<span class="w">        </span><span class="c1">// Window implementation:</span>
+<span class="w">        </span><span class="k">match</span><span class="w"> </span><span class="n">next_action</span><span class="p">.</span><span class="n">lock</span><span class="p">().</span><span class="n">unwrap</span><span class="p">().</span><span class="n">take</span><span class="p">()</span><span class="w"> </span><span class="p">{</span><span class="w"></span>
+<span class="w">            </span><span class="c1">// We received a Close event, just break from the loop</span>
+<span class="w">            </span><span class="c1">// and let the app quit</span>
+<span class="w">            </span><span class="nb">Some</span><span class="p">(</span><span class="n">WEvent</span>::<span class="n">Close</span><span class="p">)</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="k">break</span><span class="p">,</span><span class="w"></span>
+<span class="w">            </span><span class="c1">// We received a Refresh event, store that we need to refresh the</span>
+<span class="w">            </span><span class="c1">// frame</span>
+<span class="w">            </span><span class="nb">Some</span><span class="p">(</span><span class="n">WEvent</span>::<span class="n">Refresh</span><span class="p">)</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="p">{</span><span class="w"></span>
+<span class="w">                </span><span class="n">need_refresh</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span><span class="p">;</span><span class="w"></span>
+<span class="w">            </span><span class="p">}</span><span class="w"></span>
+<span class="w">            </span><span class="c1">// We received a configure event, our action depends on its</span>
+<span class="w">            </span><span class="c1">// contents</span>
+<span class="w">            </span><span class="nb">Some</span><span class="p">(</span><span class="n">WEvent</span>::<span class="n">Configure</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">new_size</span><span class="p">,</span><span class="w"> </span><span class="n">states</span><span class="w"> </span><span class="p">})</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="p">{</span><span class="w"></span>
+<span class="w">                </span><span class="c1">// the configure event contains a suggested size,</span>
+<span class="w">                </span><span class="c1">// if it is different from our current size, we need to</span>
+<span class="w">                </span><span class="c1">// update it and redraw</span>
+<span class="w">                </span><span class="k">if</span><span class="w"> </span><span class="kd">let</span><span class="w"> </span><span class="nb">Some</span><span class="p">((</span><span class="n">w</span><span class="p">,</span><span class="w"> </span><span class="n">h</span><span class="p">))</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">new_size</span><span class="w"> </span><span class="p">{</span><span class="w"></span>
+<span class="w">                    </span><span class="k">if</span><span class="w"> </span><span class="n">dimensions</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="p">(</span><span class="n">w</span><span class="p">,</span><span class="w"> </span><span class="n">h</span><span class="p">)</span><span class="w"> </span><span class="p">{</span><span class="w"></span>
+<span class="w">                        </span><span class="n">dimensions</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">(</span><span class="n">w</span><span class="p">,</span><span class="w"> </span><span class="n">h</span><span class="p">);</span><span class="w"></span>
+<span class="w">                        </span><span class="n">need_redraw</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span><span class="p">;</span><span class="w"></span>
+<span class="w">                    </span><span class="p">}</span><span class="w"></span>
+<span class="w">                </span><span class="p">}</span><span class="w"></span>
+<span class="w">                </span><span class="c1">// Are we currently resizing ?</span>
+<span class="w">                </span><span class="c1">// We check if a resize operation just started or stopped,</span>
+<span class="w">                </span><span class="c1">// because in this case we&#39;ll swap between drawing black</span>
+<span class="w">                </span><span class="c1">// and drawing the window (or the reverse), and thus we need to</span>
+<span class="w">                </span><span class="c1">// redraw</span>
+<span class="w">                </span><span class="kd">let</span><span class="w"> </span><span class="n">new_resizing</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">states</span><span class="p">.</span><span class="n">contains</span><span class="p">(</span><span class="o">&amp;</span><span class="n">State</span>::<span class="n">Resizing</span><span class="p">);</span><span class="w"></span>
+<span class="w">                </span><span class="k">if</span><span class="w"> </span><span class="n">new_resizing</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="n">resizing</span><span class="w"> </span><span class="p">{</span><span class="w"></span>
+<span class="w">                    </span><span class="n">need_redraw</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span><span class="p">;</span><span class="w"></span>
+<span class="w">                </span><span class="p">}</span><span class="w"></span>
+<span class="w">                </span><span class="n">resizing</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">new_resizing</span><span class="p">;</span><span class="w"></span>
+
+<span class="w">                </span><span class="c1">// If we have not bootstrapped yet, this is the first configure</span>
+<span class="w">                </span><span class="c1">// event, time to draw for the first time.</span>
+<span class="w">                </span><span class="k">if</span><span class="w"> </span><span class="o">!</span><span class="n">bootstrapped</span><span class="w"> </span><span class="p">{</span><span class="w"></span>
+<span class="w">                    </span><span class="n">bootstrapped</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span><span class="p">;</span><span class="w"></span>
+<span class="w">                    </span><span class="n">need_redraw</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span><span class="p">;</span><span class="w"></span>
+<span class="w">                </span><span class="p">}</span><span class="w"></span>
+<span class="w">            </span><span class="p">}</span><span class="w"></span>
+<span class="w">            </span><span class="c1">// No event, nothing new to do.</span>
+<span class="w">            </span><span class="nb">None</span><span class="w"> </span><span class="o">=&gt;</span><span class="w"> </span><span class="p">{}</span><span class="w"></span>
+<span class="w">        </span><span class="p">}</span><span class="w"></span>
+
+<span class="w">        </span><span class="k">if</span><span class="w"> </span><span class="n">need_redraw</span><span class="w"> </span><span class="p">{</span><span class="w"></span>
+<span class="w">            </span><span class="c1">// We need to redraw, but can only do it if at least one of the</span>
+<span class="w">            </span><span class="c1">// memory pools is not currently used by the server. If both are</span>
+<span class="w">            </span><span class="c1">// used, we&#39;ll keep the `need_redraw` flag to `true` and try again</span>
+<span class="w">            </span><span class="c1">// at next iteration of the loop.</span>
+<span class="w">            </span><span class="k">if</span><span class="w"> </span><span class="n">free_pools</span><span class="p">.</span><span class="n">get</span><span class="p">()</span><span class="w"> </span><span class="o">&gt;</span><span class="w"> </span><span class="mi">0</span><span class="w"> </span><span class="p">{</span><span class="w"></span>
+<span class="w">                </span><span class="c1">// Draw the contents in the pool and retrieve the buffer</span>
+<span class="w">                </span><span class="kd">let</span><span class="w"> </span><span class="n">new_buffer</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">draw</span><span class="p">(</span><span class="w"></span>
+<span class="w">                    </span><span class="n">pools</span><span class="p">.</span><span class="n">pool</span><span class="p">(),</span><span class="w"></span>
+<span class="w">                    </span><span class="k">if</span><span class="w"> </span><span class="n">resizing</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nb">None</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nb">Some</span><span class="p">(</span><span class="o">&amp;</span><span class="n">image</span><span class="p">)</span><span class="w"> </span><span class="p">},</span><span class="w"></span>
+<span class="w">                    </span><span class="n">dimensions</span><span class="w"></span>
+<span class="w">                </span><span class="p">);</span><span class="w"></span>
+<span class="w">                </span><span class="c1">// We implement this buffer to check when the server sends us the Release</span>
+<span class="w">                </span><span class="c1">// event.</span>
+<span class="w">                </span><span class="c1">// This method is unsafe for thread-safety reasons, as the callback we provide</span>
+<span class="w">                </span><span class="c1">// is not Send/Synd (it uses an Rc&lt;Cell&lt;&gt;&gt;). But our app is not multi-threaded</span>
+<span class="w">                </span><span class="c1">// here, so this is fine. =)</span>
+<span class="w">                </span><span class="kd">let</span><span class="w"> </span><span class="n">buffer</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">unsafe</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">new_buffer</span><span class="p">.</span><span class="n">implement_nonsend</span><span class="p">(</span><span class="w"></span>
+<span class="w">                    </span><span class="p">{</span><span class="w"></span>
+<span class="w">                        </span><span class="c1">// get a handle to the free pools counter, for the closure</span>
+<span class="w">                        </span><span class="kd">let</span><span class="w"> </span><span class="n">notify</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">free_pools</span><span class="p">.</span><span class="n">clone</span><span class="p">();</span><span class="w"></span>
+<span class="w">                        </span><span class="c1">// The closure that will be called when the Release event is</span>
+<span class="w">                        </span><span class="c1">// received</span>
+<span class="w">                        </span><span class="c1">// - wl_buffer::Event is an enum with a single variant</span>
+<span class="w">                        </span><span class="c1">// - we need to annotate the buffer argument because rust&#39;s type</span>
+<span class="w">                        </span><span class="c1">//   inference is unfortunately not good enough to find it alone</span>
+<span class="w">                        </span><span class="k">move</span><span class="w"> </span><span class="o">|</span><span class="n">wl_buffer</span>::<span class="n">Event</span>::<span class="n">Release</span><span class="p">,</span><span class="w"> </span><span class="n">buffer</span>: <span class="nc">Proxy</span><span class="o">&lt;</span><span class="n">wl_buffer</span>::<span class="n">WlBuffer</span><span class="o">&gt;|</span><span class="w"> </span><span class="p">{</span><span class="w"></span>
+<span class="w">                            </span><span class="c1">// This buffer has been released by the server. Increment the</span>
+<span class="w">                            </span><span class="c1">// count of free pools...</span>
+<span class="w">                            </span><span class="n">notify</span><span class="p">.</span><span class="n">set</span><span class="p">(</span><span class="n">notify</span><span class="p">.</span><span class="n">get</span><span class="p">()</span><span class="o">+</span><span class="mi">1</span><span class="p">);</span><span class="w"></span>
+<span class="w">                            </span><span class="c1">// ... and destroy the buffer</span>
+<span class="w">                            </span><span class="n">buffer</span><span class="p">.</span><span class="n">destroy</span><span class="p">();</span><span class="w"></span>
+<span class="w">                        </span><span class="p">}</span><span class="w"></span>
+<span class="w">                    </span><span class="p">},</span><span class="w"></span>
+<span class="w">                    </span><span class="o">&amp;</span><span class="n">token</span><span class="w"></span>
+<span class="w">                </span><span class="p">)</span><span class="w"> </span><span class="p">};</span><span class="w"></span>
+<span class="w">                </span><span class="c1">// Now, swap the MemPools, so next time we&#39;ll draw on the other.</span>
+<span class="w">                </span><span class="c1">// This is double-buffering.</span>
+<span class="w">                </span><span class="n">pools</span><span class="p">.</span><span class="n">swap</span><span class="p">();</span><span class="w"></span>
+<span class="w">                </span><span class="c1">// Register that one more pool is in use.</span>
+<span class="w">                </span><span class="n">free_pools</span><span class="p">.</span><span class="n">set</span><span class="p">(</span><span class="n">free_pools</span><span class="p">.</span><span class="n">get</span><span class="p">()</span><span class="o">-</span><span class="mi">1</span><span class="p">);</span><span class="w"></span>
+<span class="w">                </span><span class="c1">// Attach this new buffer to our surface.</span>
+<span class="w">                </span><span class="n">window</span><span class="p">.</span><span class="n">surface</span><span class="p">().</span><span class="n">attach</span><span class="p">(</span><span class="nb">Some</span><span class="p">(</span><span class="o">&amp;</span><span class="n">buffer</span><span class="p">),</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">);</span><span class="w"></span>
+<span class="w">                </span><span class="c1">// We need to tell the server which parts of the surface have changed,</span>
+<span class="w">                </span><span class="c1">// it uses it to only reload/redraw relevant parts for performance.</span>
+<span class="w">                </span><span class="c1">// In our case everything has likely changed so we damage everything.</span>
+<span class="w">                </span><span class="c1">//</span>
+<span class="w">                </span><span class="c1">// Two ways are possible for notifying this damage:</span>
+<span class="w">                </span><span class="k">if</span><span class="w"> </span><span class="n">window</span><span class="p">.</span><span class="n">surface</span><span class="p">().</span><span class="n">version</span><span class="p">()</span><span class="w"> </span><span class="o">&gt;=</span><span class="w"> </span><span class="mi">4</span><span class="w"> </span><span class="p">{</span><span class="w"></span>
+<span class="w">                    </span><span class="c1">// If our server is recent enough and supports at least version 4 of the</span>
+<span class="w">                    </span><span class="c1">// wl_surface interface, we can specify the damage in buffer coordinates.</span>
+<span class="w">                    </span><span class="c1">// This is obviously the best, so we do that if possible.</span>
+<span class="w">                    </span><span class="n">window</span><span class="p">.</span><span class="n">surface</span><span class="p">().</span><span class="n">damage_buffer</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="n">dimensions</span><span class="p">.</span><span class="mi">0</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="kt">i32</span><span class="p">,</span><span class="w"> </span><span class="n">dimensions</span><span class="p">.</span><span class="mi">1</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="kt">i32</span><span class="p">);</span><span class="w"></span>
+<span class="w">                </span><span class="p">}</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="p">{</span><span class="w"></span>
+<span class="w">                    </span><span class="c1">// Otherwise, we fallback to compatilibity mode. Here we specify damage</span>
+<span class="w">                    </span><span class="c1">// in surface coordinates, which would have been different if we had drawn</span>
+<span class="w">                    </span><span class="c1">// our buffer at HiDPI resolution. We didn&#39;t though, so it is ok.</span>
+<span class="w">                    </span><span class="n">window</span><span class="p">.</span><span class="n">surface</span><span class="p">().</span><span class="n">damage</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="n">dimensions</span><span class="p">.</span><span class="mi">0</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="kt">i32</span><span class="p">,</span><span class="w"> </span><span class="n">dimensions</span><span class="p">.</span><span class="mi">1</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="kt">i32</span><span class="p">);</span><span class="w"></span>
+<span class="w">                </span><span class="p">}</span><span class="w"></span>
+<span class="w">                </span><span class="c1">// We resize our frame, so that it is drawn at the right size by SCTK</span>
+<span class="w">                </span><span class="n">window</span><span class="p">.</span><span class="n">resize</span><span class="p">(</span><span class="n">dimensions</span><span class="p">.</span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="n">dimensions</span><span class="p">.</span><span class="mi">1</span><span class="p">);</span><span class="w"></span>
+<span class="w">                </span><span class="c1">// We also refresh it, so that SCTK actually draws it with the new size</span>
+<span class="w">                </span><span class="n">window</span><span class="p">.</span><span class="n">refresh</span><span class="p">();</span><span class="w"></span>
+<span class="w">                </span><span class="c1">// We commit our drawing surface, so that the server atomically applies</span>
+<span class="w">                </span><span class="c1">// all the changes we previously did.</span>
+<span class="w">                </span><span class="n">window</span><span class="p">.</span><span class="n">surface</span><span class="p">().</span><span class="n">commit</span><span class="p">();</span><span class="w"></span>
+<span class="w">                </span><span class="c1">// We don&#39;t need to redraw or refresh anymore =)</span>
+<span class="w">                </span><span class="n">need_redraw</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">false</span><span class="p">;</span><span class="w"></span>
+<span class="w">                </span><span class="n">need_refresh</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">false</span><span class="p">;</span><span class="w"></span>
+<span class="w">            </span><span class="p">}</span><span class="w"></span>
+<span class="w">        </span><span class="p">}</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="k">if</span><span class="w"> </span><span class="n">need_refresh</span><span class="w"> </span><span class="p">{</span><span class="w"></span>
+<span class="w">            </span><span class="c1">// If we don&#39;t need to redraw but only to refresh, do it</span>
+<span class="w">            </span><span class="n">window</span><span class="p">.</span><span class="n">refresh</span><span class="p">();</span><span class="w"></span>
+<span class="w">            </span><span class="c1">// We still need to commit our surface, as the decorations are drawn as</span>
+<span class="w">            </span><span class="c1">// subsurfaces of it.</span>
+<span class="w">            </span><span class="n">window</span><span class="p">.</span><span class="n">surface</span><span class="p">().</span><span class="n">commit</span><span class="p">();</span><span class="w"></span>
+<span class="w">            </span><span class="n">need_refresh</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">false</span><span class="p">;</span><span class="w"></span>
+<span class="w">        </span><span class="p">}</span><span class="w"></span>
+
+<span class="w">        </span><span class="c1">// These last two calls are necessary for the processing of Wayland messages:</span>
+<span class="w">        </span><span class="c1">// - first, flush all our requests to the server on the unix socket</span>
+<span class="w">        </span><span class="n">display</span><span class="p">.</span><span class="n">flush</span><span class="p">().</span><span class="n">unwrap</span><span class="p">();</span><span class="w"></span>
+<span class="w">        </span><span class="c1">// - then, retrieve all the incoming messages</span>
+<span class="w">        </span><span class="c1">//   this method blocks until a message arrives from the server, and will process</span>
+<span class="w">        </span><span class="c1">//   all events by calling the implementation of the target object or each,</span>
+<span class="w">        </span><span class="c1">//   and only return once all pending messages have been processed.</span>
+<span class="w">        </span><span class="n">event_queue</span><span class="p">.</span><span class="n">dispatch</span><span class="p">().</span><span class="n">unwrap</span><span class="p">();</span><span class="w"></span>
+<span class="w">    </span><span class="p">}</span><span class="w"></span>
+<span class="p">}</span><span class="w"></span>
+</code></pre></div>
+
+<p>Here we are done with our app. You can find the full source of this program
+<a href="https://github.com/Smithay/client-toolkit/blob/master/examples/image_viewer.rs">in the github repo of SCTK</a>
+and try to run it in a Wayland compositor.</p>
+<p>Thanks for following me to the end, and I hope I managed to give you a good general
+idea of how Wayland works, and how SCTK can be used to make Wayland native apps. =)</p>
+    </div>
+  </article>
+    </div>
+  </div>
+
+  <footer class="footer">
+    <div class="container">
+<div class="row">
+  <ul class="col-sm-6 list-inline">
+      <li class="list-inline-item"><a href="/authors.html">Authors</a></li>
+    <li class="list-inline-item"><a href="/archives.html">Archives</a></li>
+    <li class="list-inline-item"><a href="/categories.html">Categories</a></li>
+  </ul>
+  <p class="col-sm-6 text-sm-right text-muted">
+    Generated by <a href="https://github.com/getpelican/pelican" target="_blank">Pelican</a>
+    / <a href="https://github.com/nairobilug/pelican-alchemy" target="_blank">&#x2728;</a>
+  </p>
+</div>    </div>
+  </footer>
+</body>
+
+</html>

@@ -1,0 +1,236 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <!-- Required meta tags -->
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+
+  <title>  Wayland-rs 0.20 & Smithay's Client Toolkit | Smithay project
+</title>
+  <link rel="canonical" href="/wayland-rs-v-0-20.html">
+
+
+  <link rel="stylesheet" href="/theme/css/bootstrap.min.css">
+  <link rel="stylesheet" href="/theme/css/font-awesome.min.css">
+  <link rel="stylesheet" href="/theme/css/pygments/default.min.css">
+  <link rel="stylesheet" href="/theme/css/theme.css">
+
+  
+  <meta name="description" content="Status point of the project: large rework of the wayland bindings in version 0.20, and announcement of Smithay's Client Toolkit.">
+
+
+</head>
+
+<body>
+  <header class="header">
+    <div class="container">
+<div class="row">
+    <div class="col-sm-4">
+      <a href="/">
+        <img class="img-fluid rounded" src=/images/smithay_logo.svg alt="Smithay project">
+      </a>
+    </div>
+  <div class="col-sm-8">
+    <h1 class="title"><a href="/">Smithay project</a></h1>
+      <p class="text-muted">The rusty smithy for wayland compositors</p>
+      <ul class="list-inline">
+            <li class="list-inline-item"><a href="/pages/about.html">About</a></li>
+            <li class="list-inline-item"><a href="/pages/contact.html">Contact</a></li>
+            <li class="list-inline-item"><a href="/pages/documentation.html">Documentation</a></li>
+            <li class=" list-inline-item text-muted">|</li>
+          <li class="list-inline-item"><a class="fa fa-github" href="https://github.com/Smithay" target="_blank"></a></li>
+      </ul>
+  </div>
+</div>    </div>
+  </header>
+
+  <div class="main">
+    <div class="container">
+      <h1>  Wayland-rs 0.20 & Smithay's Client Toolkit
+</h1>
+      <hr>
+  <article class="article">
+    <header>
+      <ul class="list-inline">
+        <li class="list-inline-item text-muted" title="2018-04-26T18:00:00+02:00">
+          <i class="fa fa-clock-o"></i>
+          Thu 26 April 2018
+        </li>
+        <li class="list-inline-item">
+          <i class="fa fa-folder-open-o"></i>
+          <a href="/category/releases.html">Releases</a>
+        </li>
+          <li class="list-inline-item">
+            <i class="fa fa-user-o"></i>
+              <a href="/author/victor-berger.html">Victor Berger</a>          </li>
+      </ul>
+    </header>
+    <div class="content">
+      <p>This article marks the end of a large rework of the
+<a href="https://github.com/smithay/wayland-rs/">wayland-rs</a> group of crates. For context, this
+repository hosts a few crates offering bindings to the wayland protocol, both client-side
+via <a href="https://docs.rs/wayland-client/">wayland-client</a> and server-side via
+<a href="https://docs.rs/wayland-server/">wayland-server</a>.</p>
+<p>This is a major step compared to previous version, 0.14, and the large gap in version numbers
+is meant to reflect it. The whole API has been completely overhauled using the insights we
+got from working on <a href="https://github.com/smithay/smithay">smithay</a>, using <code>wayland-server</code>.</p>
+<h2>Summary of the changes</h2>
+<p>If I had to describe this refactor in a single sentence, I'd say: "don't be afraid to trade
+small runtime costs for large ergonomic improvements". The previous design of the libraries
+tried to remain as low-overhead possible as possible on the wayland C libs. This caused an
+API that was quite convoluted to try to
+<a href="https://docs.rs/token_store/">make safe sharing of mutable state</a>, and at 
+some points not very different from manually re-implementing a v-table. Other issues more
+specific to smithay resulted in a large accumulation of template parameters on types that need
+to be named and stored. All these issues made the API quite tedious to use overall.</p>
+<p>As a result, for this new version I decided to embrace trait objects, <code>Rc</code>, and <code>Arc</code>.
+Additionally, the API redesign was made focusing on <em>the spirit</em> of the wayland protocol,
+rather than trying to stay close to <em>the C API</em>.</p>
+<p>To list a few clear gains from this rework:</p>
+<ul>
+<li>The scanner (crate that generate API code from the XML protocol files) almost no longer
+  needs to generate <code>unsafe { }</code> blocks in its generated code</li>
+<li>The long standing issue of handling both <code>Send</code> and non-<code>Send</code> shared state is finally
+  solved (see next section)</li>
+<li>The ergonomics and flexibility of specifying callbacks for wayland events has been greatly
+  improved</li>
+<li>Overall better interaction with objects from the C world, if wayland-rs is used in
+  combination with C libraries</li>
+</ul>
+<p>Another interesting point is that, as this rework is much less centered around the C API,
+it allowed me to keep open the door for a full-rust implementation of the protocol. Thus I
+designed the libraries around a cargo feature <code>native_lib</code>, controlling whether the native
+C library should be used or not. Currently, the libraries are <em>not</em> usable without this
+cargo feature enabled (most of the code is <code>unimplemented!()</code>), but it should allow for
+implementing this afterwards, without changing public API at all. Meaning that for programs
+that don't specifically need the <code>native_lib</code> feature (that will still be required for
+interacting with C libraries for example), enabling or disabling this feature would be
+transparent.</p>
+<p>Note however that I currently have no plans about <em>when</em> I'll do that, mostly because
+quite a lot of things are higher on my todo-list. But if this question interests you,
+don't hesitate to <a href="/pages/contact.html">get in touch</a>, I'd be happy to work on it sooner
+if it means not doing it alone. ;)</p>
+<h2>The new callback specification</h2>
+<p>The most major API change is on the way callbacks are handled. Previously you had to provide
+a set of freestanding functions that would be given access to some state data for each event,
+with the difficulties of sharing state between an undeterminate set of callbacks a priori...</p>
+<p>Now each time a new protocol object is created, you'll receive it as a <code>NewProxy</code>/<code>NewResource</code>
+object (depending on whether you are client side or server side), and will have to implement
+it before accessing the real <code>Proxy</code>/<code>Resource</code> and being able to use it. Implementing an
+object consists of providing a type implementing the appropriate <code>Implementation&lt;Meta, Msg&gt;</code>
+trait.</p>
+<p>This trait has a very simple definition:</p>
+<div class="highlight"><pre><span></span><code><span class="k">pub</span><span class="w"> </span><span class="k">trait</span><span class="w"> </span><span class="n">Implementation</span><span class="o">&lt;</span><span class="n">Meta</span><span class="p">,</span><span class="w"> </span><span class="n">Msg</span><span class="o">&gt;</span><span class="w"> </span><span class="p">{</span><span class="w"></span>
+<span class="w">    </span><span class="k">fn</span> <span class="nf">receive</span><span class="p">(</span><span class="o">&amp;</span><span class="k">mut</span><span class="w"> </span><span class="bp">self</span><span class="p">,</span><span class="w"> </span><span class="n">msg</span>: <span class="nc">Msg</span><span class="p">,</span><span class="w"> </span><span class="n">meta</span>: <span class="nc">Meta</span><span class="p">);</span><span class="w"></span>
+<span class="p">}</span><span class="w"></span>
+</code></pre></div>
+
+<p>Here the <code>Meta</code> type parameter represent some metadata associated with the message you
+receive (often a <code>Proxy</code>/<code>Resource</code> handle to the wayland object receiving the message),
+while <code>Msg</code> is a type representing the message itself (often an enum of the possible wayland
+messages this object can receive).</p>
+<p>The convenience is that <code>Implementation&lt;Meta, Msg&gt;</code> is automatically implemented for all
+type that implement <code>FnMut(Msg, Meta)</code>. As such, you can easily provide closures as
+implementations, with all the ergonomics of capturing values and code terseness that
+implies. The only catch being that the implementations must be <code>'static</code>, so you'll need
+to rely on <code>Arc</code> or <code>Rc</code> to share data. The runtime cost implied should be negligible however,
+the wayland protocol part should hardly be a bottleneck for any application.</p>
+<p>There are also two ways to implement an object, the default one requiring the 
+implementation type to be <code>Send</code>, and a secondary one that relaxes this requirement provided you
+provide a token that proves you are doing it from the same thread as the one on which the
+implementation will be invoked.</p>
+<h2>Smithay's Client Toolkit</h2>
+<p>I also took the occasion of this large API rework to fuse
+<a href="https://github.com/smithay/wayland-kbd">wayland-kbd</a> and
+<a href="https://github.com/smithay/wayland-window">wayland-window</a> into a single crate named
+<a href="https://github.com/smithay/client-toolkit">smithay-client-toolkit</a>, which will be some
+kind of an equivalent of <a href="https://github.com/smithay/smithay">smithay</a>, but for client
+applications. Given the scope of what is possible, it'll clearly remain much simpler than
+smithay itself, as it only abstracts the wayland protocol, and nothing like all of
+smithay's backends.</p>
+<p>Currently, it only provides some barebones functionalities, but there is still a lot
+of room in this toolkit to grow if you want to get involved.</p>
+<p>As an example, a minimal client could be created like this:</p>
+<div class="highlight"><pre><span></span><code><span class="k">extern</span><span class="w"> </span><span class="k">crate</span><span class="w"> </span><span class="n">smithay_client_toolkit</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="n">sctk</span><span class="p">;</span><span class="w"></span>
+
+<span class="k">use</span><span class="w"> </span><span class="n">sctk</span>::<span class="n">Environment</span><span class="p">;</span><span class="w"></span>
+<span class="k">use</span><span class="w"> </span><span class="n">sctk</span>::<span class="n">window</span>::<span class="p">{</span><span class="n">BasicFrame</span><span class="p">,</span><span class="w"> </span><span class="n">Window</span><span class="p">};</span><span class="w"></span>
+
+<span class="c1">// wayland-client is re-exported in the client toolkit, for convenience</span>
+<span class="k">use</span><span class="w"> </span><span class="n">sctk</span>::<span class="n">reexports</span>::<span class="n">client</span>::<span class="p">{</span><span class="n">Display</span><span class="p">,</span><span class="w"> </span><span class="n">Proxy</span><span class="p">};</span><span class="w"></span>
+<span class="k">use</span><span class="w"> </span><span class="n">sctk</span>::<span class="n">reexports</span>::<span class="n">client</span>::<span class="n">protocol</span>::<span class="n">wl_display</span>::<span class="n">RequestsTrait</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="n">DisplayRequests</span><span class="p">;</span><span class="w"></span>
+<span class="k">use</span><span class="w"> </span><span class="n">sctk</span>::<span class="n">reexports</span>::<span class="n">client</span>::<span class="n">protocol</span>::<span class="n">wl_compositor</span>::<span class="n">RequestsTrait</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="n">CompositorRequests</span><span class="p">;</span><span class="w"></span>
+
+<span class="k">fn</span> <span class="nf">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span><span class="w"></span>
+<span class="w">    </span><span class="c1">// Connect to a wayland server</span>
+<span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="p">(</span><span class="n">display</span><span class="p">,</span><span class="w"> </span><span class="k">mut</span><span class="w"> </span><span class="n">event_queue</span><span class="p">)</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">Display</span>::<span class="n">connect_to_env</span><span class="p">().</span><span class="n">unwrap</span><span class="p">();</span><span class="w"></span>
+
+<span class="w">    </span><span class="c1">// The Environment an abstraction that binds most of the classic globals</span>
+<span class="w">    </span><span class="c1">// for you. Doing this manually is very boring and repetitive.</span>
+<span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="n">env</span><span class="w"> </span><span class="o">=</span><span class="w"></span>
+<span class="w">        </span><span class="n">Environment</span>::<span class="n">from_registry</span><span class="p">(</span><span class="n">display</span><span class="p">.</span><span class="n">get_registry</span><span class="p">().</span><span class="n">unwrap</span><span class="p">(),</span><span class="w"> </span><span class="o">&amp;</span><span class="k">mut</span><span class="w"> </span><span class="n">event_queue</span><span class="p">).</span><span class="n">unwrap</span><span class="p">();</span><span class="w"></span>
+
+<span class="w">    </span><span class="c1">// Create a wl_surface, which is the canvas on which we can draw the</span>
+<span class="w">    </span><span class="c1">// contents of our window</span>
+<span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="n">surface</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">env</span><span class="p">.</span><span class="n">compositor</span><span class="w"></span>
+<span class="w">        </span><span class="p">.</span><span class="n">create_surface</span><span class="p">()</span><span class="w"></span>
+<span class="w">        </span><span class="p">.</span><span class="n">unwrap</span><span class="p">()</span><span class="w"></span>
+<span class="w">        </span><span class="p">.</span><span class="n">implement</span><span class="p">(</span><span class="o">|</span><span class="n">_</span><span class="p">,</span><span class="w"> </span><span class="n">_</span><span class="o">|</span><span class="w"> </span><span class="p">{</span><span class="w"></span>
+<span class="w">            </span><span class="cm">/* this is the surface implementation, this one ignores all events */</span><span class="w"></span>
+<span class="w">        </span><span class="p">});</span><span class="w"></span>
+
+<span class="w">    </span><span class="c1">// Now create a Window for this surface</span>
+<span class="w">    </span><span class="c1">// The window abstracts all the protocol handling of the shell, and provides</span>
+<span class="w">    </span><span class="c1">// a simplistic decoration for our window (as many wayland compositors require the</span>
+<span class="w">    </span><span class="c1">// clients to draw their decorations themselves).</span>
+<span class="w">    </span><span class="c1">// The type parameter (here `BasicFrame`) defines what kind of decorations are drawn,</span>
+<span class="w">    </span><span class="c1">// and can be customized by implementing the appropriate trait.</span>
+<span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="k">mut</span><span class="w"> </span><span class="n">window</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">Window</span>::<span class="o">&lt;</span><span class="n">BasicFrame</span><span class="o">&gt;</span>::<span class="n">init</span><span class="p">(</span><span class="w"></span>
+<span class="w">        </span><span class="n">surface</span><span class="p">,</span><span class="w"></span>
+<span class="w">        </span><span class="p">(</span><span class="mi">640</span><span class="p">,</span><span class="w"> </span><span class="mi">480</span><span class="p">),</span><span class="w"></span>
+<span class="w">        </span><span class="o">&amp;</span><span class="n">env</span><span class="p">.</span><span class="n">compositor</span><span class="p">,</span><span class="w"></span>
+<span class="w">        </span><span class="o">&amp;</span><span class="n">env</span><span class="p">.</span><span class="n">subcompositor</span><span class="p">,</span><span class="w"></span>
+<span class="w">        </span><span class="o">&amp;</span><span class="n">env</span><span class="p">.</span><span class="n">shm</span><span class="p">,</span><span class="w"></span>
+<span class="w">        </span><span class="o">&amp;</span><span class="n">env</span><span class="p">.</span><span class="n">shell</span><span class="p">,</span><span class="w"></span>
+<span class="w">        </span><span class="k">move</span><span class="w"> </span><span class="o">|</span><span class="n">event</span><span class="p">,</span><span class="w"> </span><span class="p">()</span><span class="o">|</span><span class="w"> </span><span class="p">{</span><span class="w"></span>
+<span class="w">            </span><span class="cm">/* handle the window&#39;s events */</span><span class="w"></span>
+<span class="w">        </span><span class="p">},</span><span class="w"></span>
+<span class="w">    </span><span class="p">).</span><span class="n">expect</span><span class="p">(</span><span class="s">&quot;Failed to create a window !&quot;</span><span class="p">);</span><span class="w"></span>
+
+<span class="w">    </span><span class="c1">// The main event loop</span>
+<span class="w">    </span><span class="k">loop</span><span class="w"> </span><span class="p">{</span><span class="w"></span>
+<span class="w">        </span><span class="c1">// flush our messages to the server</span>
+<span class="w">        </span><span class="n">display</span><span class="p">.</span><span class="n">flush</span><span class="p">().</span><span class="n">unwrap</span><span class="p">();</span><span class="w"></span>
+<span class="w">        </span><span class="c1">// receive and process the messages it sends back</span>
+<span class="w">        </span><span class="c1">// this is where all the appropriate implementations are called internally</span>
+<span class="w">        </span><span class="n">event_queue</span><span class="p">.</span><span class="n">dispatch</span><span class="p">().</span><span class="n">unwrap</span><span class="p">();</span><span class="w"></span>
+
+<span class="w">        </span><span class="cm">/*</span>
+<span class="cm">          Do any other processing we need, including redrawing the surface if needed</span>
+<span class="cm">        */</span><span class="w"></span>
+<span class="w">    </span><span class="p">}</span><span class="w"></span>
+<span class="p">}</span><span class="w"></span>
+</code></pre></div>
+    </div>
+  </article>
+    </div>
+  </div>
+
+  <footer class="footer">
+    <div class="container">
+<div class="row">
+  <ul class="col-sm-6 list-inline">
+      <li class="list-inline-item"><a href="/authors.html">Authors</a></li>
+    <li class="list-inline-item"><a href="/archives.html">Archives</a></li>
+    <li class="list-inline-item"><a href="/categories.html">Categories</a></li>
+  </ul>
+  <p class="col-sm-6 text-sm-right text-muted">
+    Generated by <a href="https://github.com/getpelican/pelican" target="_blank">Pelican</a>
+    / <a href="https://github.com/nairobilug/pelican-alchemy" target="_blank">&#x2728;</a>
+  </p>
+</div>    </div>
+  </footer>
+</body>
+
+</html>

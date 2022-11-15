@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <!-- Required meta tags -->
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+
+  <title>  Wayland-rs 0.21: Pure rust implementation | Smithay project
+</title>
+  <link rel="canonical" href="/wayland-rs-v-0-21.html">
+
+
+  <link rel="stylesheet" href="/theme/css/bootstrap.min.css">
+  <link rel="stylesheet" href="/theme/css/font-awesome.min.css">
+  <link rel="stylesheet" href="/theme/css/pygments/default.min.css">
+  <link rel="stylesheet" href="/theme/css/theme.css">
+
+  
+  <meta name="description" content="Announcement of v0.21 of wayland-rs, featuring a pure rust implementation of the wayland protocol.">
+
+
+</head>
+
+<body>
+  <header class="header">
+    <div class="container">
+<div class="row">
+    <div class="col-sm-4">
+      <a href="/">
+        <img class="img-fluid rounded" src=/images/smithay_logo.svg alt="Smithay project">
+      </a>
+    </div>
+  <div class="col-sm-8">
+    <h1 class="title"><a href="/">Smithay project</a></h1>
+      <p class="text-muted">The rusty smithy for wayland compositors</p>
+      <ul class="list-inline">
+            <li class="list-inline-item"><a href="/pages/about.html">About</a></li>
+            <li class="list-inline-item"><a href="/pages/contact.html">Contact</a></li>
+            <li class="list-inline-item"><a href="/pages/documentation.html">Documentation</a></li>
+            <li class=" list-inline-item text-muted">|</li>
+          <li class="list-inline-item"><a class="fa fa-github" href="https://github.com/Smithay" target="_blank"></a></li>
+      </ul>
+  </div>
+</div>    </div>
+  </header>
+
+  <div class="main">
+    <div class="container">
+      <h1>  Wayland-rs 0.21: Pure rust implementation
+</h1>
+      <hr>
+  <article class="article">
+    <header>
+      <ul class="list-inline">
+        <li class="list-inline-item text-muted" title="2018-07-18T22:00:00+02:00">
+          <i class="fa fa-clock-o"></i>
+          Wed 18 July 2018
+        </li>
+        <li class="list-inline-item">
+          <i class="fa fa-folder-open-o"></i>
+          <a href="/category/releases.html">Releases</a>
+        </li>
+          <li class="list-inline-item">
+            <i class="fa fa-user-o"></i>
+              <a href="/author/victor-berger.html">Victor Berger</a>          </li>
+      </ul>
+    </header>
+    <div class="content">
+      <blockquote>
+<p><a href="https://github.com/Smithay/wayland-rs">wayland-rs</a> is a set of crates providing generic APIs to
+manipulate the <a href="https://en.wikipedia.org/wiki/Wayland_(display_server_protocol)">Wayland protocol</a>, 
+successor of X11 for linux windowing.</p>
+</blockquote>
+<p>Here I am finally, after having
+<a href="https://github.com/Smithay/wayland-rs/pull/165">hinted at the possibility</a> and finally taken the
+time to write and merge <a href="https://github.com/Smithay/wayland-rs/pull/170">quite an epic pull request</a>,
+I can finally say it: wayland-rs is now a pure rust implementation of the protocol, rather than a
+crate of bindings to the <a href="https://gitlab.freedesktop.org/wayland/wayland">wayland system C libraries</a>.</p>
+<p>Or is it? The people who have already discussed this matter know that abandoning the C wayland
+libraries is really cutting oneself from many interactions. It is most notably required by OpenGL, but also
+any other C library that you'd want to use and that interacts directly with wayland like GStreamer for
+example. This is obviously not something I'm ready (nor willing) to impose on the users of wayland-rs,
+among which are <a href="https://github.com/tomaka/winit">winit</a> and <a href="https://github.com/tomaka/glutin">glutin</a>,
+which quite  obviously need access to OpenGL...</p>
+<p>This is why starting from the upcoming 0.21 release, wayland-client and wayland-server will simply let
+you choose what you want: the rust implementation or the C one.</p>
+<p>This note is organized in three parts: first I'll detail what is the new design of the wayland-rs 
+crates and how they can be used, then I'll detail what the future looks like, and finally I'll share
+some insights, ideas, thoughts and frustrations I had during my work on this implementation.</p>
+<h3>The new organization of wayland-rs</h3>
+<p>While the API itself did not change a lot from 0.20 to 0.21, there was a very significant refactor
+of both wayland-client and wayland-server, shaping them around the new <code>native_lib</code> cargo feature.
+The deal is simple, by default the crates use the rust implementation, and if you activate the feature
+they'll switch to using the system libraries, and expose new parts of the API which give you access
+to the necessary C pointers, allowing you to provide them to other C libraries that may need them.</p>
+<p>In previous versions, the <code>native_lib</code> feature flag was activated by default, and disabling it caused
+your program to quickly die on our dear <code>unimplemented!()</code> macro. This is no longer the case!</p>
+<p>Client side, the <code>egl</code> feature of <code>wayland-client</code> automatically pulls the <code>native_lib</code> feature, as
+it is mandatory for OpenGL support and interacting with Mesa. Which means that either you were not
+using OpenGL, an you should be able to seamlessly migrate to the rust implementation, or you were
+using OpenGL and the crate will just stick to using the system libraries.</p>
+<h3>What's next?</h3>
+<p>The 0.21 version is not yet released. While my implementation passes the few tests I've done manually,
+I'm not yet to a coverage and testing I'm confident enough with to make it default. As such I'm only
+releasing a <code>0.21.0-alpha1</code> version, to test it more thoroughly before making it the default.</p>
+<p>Now that this huge milestone is reached, I'm going to radically switch the direction development of
+these crates. Up to now, I've mostly focused in making an API as reasonable as possible, but deeply
+rooted in the API exposed by the C libs I've been building upon. This will now change, as I plan for
+the Rust implementation to be the core drive of design of the crates, and relegate the C backend to
+be the one retrofitted into the rust API.</p>
+<p>This opens a lot of design space, and as such there are numerous questions I'm not settled yet on.
+If you want to take part in this, I'd be glad to hear (or read) what you have to say! I'm
+using the <a href="https://github.com/Smithay/wayland-rs/issues">github issue tracker</a> to keep track of my
+questions and ideas. If you first want to get used with the libs, you can help too!
+<a href="https://github.com/Smithay/wayland-rs/tree/master/tests">There are tons of tests that need to be written</a>,
+and I'm willing to mentor anyone who wants to help.</p>
+<h3>The thoughts and insights</h3>
+<p>The pasts versions of these crates have been an incredible learning experience for me, notably on
+the exercise of trying to implement a safe and ergonomic API on top of a C lib that is definitely not
+rust-friendly. But actually implementing the protocol itself was quite a new level. I actually 
+designed the groundwork for this almost a year ago, and had the branch sleeping on my computer until
+I started seriously working on it again 2 months ago. I took some inspiration from
+<a href="https://github.com/perceptia/skylane">skylane</a>, but my work was really mostly reverse-engineering the
+C libs and taking inspiration from them.</p>
+<h4>The protocol itself</h4>
+<p>A large design constraint lies in the protocol itself. Wayland is spoken by binary messages over an
+unix socket. It is an object oriented protocol, where each message is associated to an object which
+defines its interface.</p>
+<p>Which means that, to parse a message, you must know the type of the object that sent it. Which means
+a large part of the work of the implementation is actually to keep track of the map of which object
+exists and what their types are. And given a message can create or destroy objects, you need to have
+at least partially processed a message to be able to even <em>parse</em> the next one! Talk about being
+stateful.</p>
+<p>This is quite a constraint on the implementation, and I now better understand how well the callback
+oriented approach of the C libraries fits this protocol: the wayland using program provides a large
+set of callbacks to the wayland library, one for each possible message, the lib then takes care of
+firing them.</p>
+<h4>virtual dispatch and runtime costs</h4>
+<p>This whole implementation has also been for me quite a wake-up regarding runtime costs. Indeed
+Rust has a powerful monomorphisation and a lot can be done statically, but really, sometimes a
+trait object does the job pretty well, and at a greater simplicity.</p>
+<p>In my case, it would not have been possible to avoid dynamic dispatch anyway: the contents of the
+messages the lib receive (which are runtime values) determines which of the (statically-typed)
+callbacks should be fired. There is no escape, so I embraced the dynamic dispatch.</p>
+<p>As a result, I now have the wayland-scanner parsing the XML specifications of the protocol and its
+extensions, generating a lot of rust code, encoding the objects and their interfaces in various traits
+with associated types and constants. These traits allow me to build a dynamic representation of the 
+objects and their interfaces that the parser can then use at runtime to parse the protocol and 
+dispatch the messages to their callbacks.</p>
+<p>In particular, I'm doing what I started calling "manual vtables" after a little epiphany I had 
+working on that. Because yeah, storing a function pointer in a struct is not very different from
+a vtable, is it?</p>
+<p>For example I have this <code>Object</code> type. It does not has any type parameter linked to the
+wayland objects. I can create an <code>Object</code> from a type <code>I</code> implementing my <code>Interface</code> trait:</p>
+<div class="highlight"><pre><span></span><code><span class="kd">let</span><span class="w"> </span><span class="n">my_object</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">Object</span>::<span class="n">from_interface</span>::<span class="o">&lt;</span><span class="n">I</span><span class="o">&gt;</span><span class="p">();</span><span class="w"></span>
+</code></pre></div>
+
+<p>This is my bridge from the static world to the dynamic one. The fields of the <code>Object</code> are filled
+with the values from the associated constants of <code>I</code>.</p>
+<p>And among the fields of <code>Object</code> are a few function pointers, like <code>fn(u16, u32) -&gt; Option&lt;Object&gt;</code>,
+which are initialized by specializing generic functions:</p>
+<div class="highlight"><pre><span></span><code><span class="k">fn</span> <span class="nf">something</span><span class="o">&lt;</span><span class="n">I</span>: <span class="nc">Interface</span><span class="o">&gt;</span><span class="p">(</span><span class="n">a</span>: <span class="kt">u16</span><span class="p">,</span><span class="w"> </span><span class="n">b</span>: <span class="kt">u32</span><span class="p">)</span><span class="w"> </span>-&gt; <span class="nb">Option</span><span class="o">&lt;</span><span class="n">Object</span><span class="o">&gt;</span><span class="w"> </span><span class="p">{</span><span class="w"></span>
+<span class="w">    </span><span class="c1">// compute something using a, b, and the associated constants of I</span>
+<span class="p">}</span><span class="w"></span>
+
+<span class="kd">let</span><span class="w"> </span><span class="n">object</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">Object</span><span class="w"> </span><span class="p">{</span><span class="w"></span>
+<span class="w">    </span><span class="n">something_func</span>: <span class="nc">something</span>::<span class="o">&lt;</span><span class="n">MyInterface</span><span class="o">&gt;</span><span class="p">,</span><span class="w"></span>
+<span class="w">    </span><span class="o">..</span><span class="p">.</span><span class="w"></span>
+<span class="p">}</span><span class="w"></span>
+</code></pre></div>
+
+<p>It's not a revolution, but I thought this was an interesting way to use the trait system. My
+implementation has a lot of these all over the place, in a deep mix of static and dynamic
+dispatch.</p>
+<p>To be fair, the C-based code does also have these, so this is not really new. You need to have
+a way to retrieve some type information from a C callback where you only provide a function
+pointer and a <code>*mut c_void</code> data!</p>
+<h4><code>Rc</code>, <code>Refcell</code>, <code>Arc</code> and <code>Mutex</code> are friends, not ennemies</h4>
+<p>No really, they are all over the place, and they do a pretty good job!</p>
+<p>It's cool to be able to avoid runtime costs if you really need to, but sometimes it's not worth
+the pain. I don't need top performance, as the wayland socket is hardly a bottleneck in general.</p>
+<p>I thus focused on making things work correctly, without any care for performance. I'll come back
+later to refactor all that anyway, iterating to improve the API's ergonomics.</p>
+<p>Thanks for reading this, and have some happy Rusting!</p>
+    </div>
+  </article>
+    </div>
+  </div>
+
+  <footer class="footer">
+    <div class="container">
+<div class="row">
+  <ul class="col-sm-6 list-inline">
+      <li class="list-inline-item"><a href="/authors.html">Authors</a></li>
+    <li class="list-inline-item"><a href="/archives.html">Archives</a></li>
+    <li class="list-inline-item"><a href="/categories.html">Categories</a></li>
+  </ul>
+  <p class="col-sm-6 text-sm-right text-muted">
+    Generated by <a href="https://github.com/getpelican/pelican" target="_blank">Pelican</a>
+    / <a href="https://github.com/nairobilug/pelican-alchemy" target="_blank">&#x2728;</a>
+  </p>
+</div>    </div>
+  </footer>
+</body>
+
+</html>

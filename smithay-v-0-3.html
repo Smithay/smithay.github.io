@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <!-- Required meta tags -->
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+
+  <title>  Version 0.3 of Smithay | Smithay project
+</title>
+  <link rel="canonical" href="/smithay-v-0-3.html">
+
+
+  <link rel="stylesheet" href="/theme/css/bootstrap.min.css">
+  <link rel="stylesheet" href="/theme/css/font-awesome.min.css">
+  <link rel="stylesheet" href="/theme/css/pygments/default.min.css">
+  <link rel="stylesheet" href="/theme/css/theme.css">
+
+  
+  <meta name="description" content="Announcement of version 0.3 of Smithay, with many improvements and changes since the previous version.">
+
+
+</head>
+
+<body>
+  <header class="header">
+    <div class="container">
+<div class="row">
+    <div class="col-sm-4">
+      <a href="/">
+        <img class="img-fluid rounded" src=/images/smithay_logo.svg alt="Smithay project">
+      </a>
+    </div>
+  <div class="col-sm-8">
+    <h1 class="title"><a href="/">Smithay project</a></h1>
+      <p class="text-muted">The rusty smithy for wayland compositors</p>
+      <ul class="list-inline">
+            <li class="list-inline-item"><a href="/pages/about.html">About</a></li>
+            <li class="list-inline-item"><a href="/pages/contact.html">Contact</a></li>
+            <li class="list-inline-item"><a href="/pages/documentation.html">Documentation</a></li>
+            <li class=" list-inline-item text-muted">|</li>
+          <li class="list-inline-item"><a class="fa fa-github" href="https://github.com/Smithay" target="_blank"></a></li>
+      </ul>
+  </div>
+</div>    </div>
+  </header>
+
+  <div class="main">
+    <div class="container">
+      <h1>  Version 0.3 of Smithay
+</h1>
+      <hr>
+  <article class="article">
+    <header>
+      <ul class="list-inline">
+        <li class="list-inline-item text-muted" title="2021-07-24T21:00:00+02:00">
+          <i class="fa fa-clock-o"></i>
+          Sat 24 July 2021
+        </li>
+        <li class="list-inline-item">
+          <i class="fa fa-folder-open-o"></i>
+          <a href="/category/releases.html">Releases</a>
+        </li>
+          <li class="list-inline-item">
+            <i class="fa fa-user-o"></i>
+              <a href="/author/victor-berger.html">Victor Berger</a>          </li>
+      </ul>
+    </header>
+    <div class="content">
+      <p>I am proud to finally announce the release of version 0.3 of <a href="https://crates.io/crates/smithay">Smithay</a>!</p>
+<p><a href="https://crates.io/crates/smithay">Smithay</a> is a library for writing Wayland compositors. A Wayland compositor has a lot of things to manage,
+both binding directly to low-level system APIs and managing the numerous Wayland clients that are running
+on the system. Smithay provides several abstractions that simplify this job for your, while trying to remain
+mostly unopinionated to not constrain the design space for the compositors based on it.</p>
+<p>Since the previous release two years and a half ago, Smithay has changed and matured a lot. This blog post
+presents the main changes and new stuff that has been done.</p>
+<h2>Main fundamental changes</h2>
+<h4>Graphics backend rewrite</h4>
+<p>The graphics backend has largely be rewriten <em>again</em> by <a href="https://github.com/drakulix"><strong>@drakulix</strong></a>, to completely re-organize it in
+a way that better fits the natural handling of client buffers. The structure is now centered around graphics
+buffers. The <a href="https://smithay.github.io/smithay/smithay/backend/allocator/index.html"><code>backend::allocator</code></a>
+module provides tools for allocating such buffers using the system libGBM, as well as interoperability with
+DMABUF-based buffers submitted by the client apps.</p>
+<p>These buffers are to be used in conjunction with the new renderer abstraction defined in the
+<a href="https://smithay.github.io/smithay/smithay/backend/renderer/index.html"><code>backend::renderer</code></a> module,
+providing functions to draw the clients' windows content into your main compositor space. A GLES2-based
+renderer implementation is also provided, and a Vulkan-based on is on the roadmap.</p>
+<p>Alongside this refactor, <a href="https://crates.io/crates/smithay">Smithay</a> gained support for DRM atomic modesetting as well as DRM planes.
+Furthermore, Anvil (our reference compositor) is now able to handle multi-monitor setups.</p>
+<h4>Client surface state handling</h4>
+<p>The Wayland protocol mandates intricate semantics for the double-buffered state of wayland surfaces (notably
+when considering synchronized subsurfaces), that extend to protocol-extensions that piggy-back on this
+mechanism. <a href="https://crates.io/crates/smithay">Smithay</a> now provides a generic mechanism for tracking and applying this state. For details about
+its usage, see the <a href="https://smithay.github.io/smithay/smithay/wayland/compositor/index.html"><code>wayland::compositor</code></a>
+module, and notably the <a href="https://smithay.github.io/smithay/smithay/wayland/compositor/struct.SurfaceData.html"><code>SurfaceData</code></a>
+struct which is the actual container.</p>
+<h4>Event structure centered on calloop</h4>
+<p>While previously most backend components of <a href="https://crates.io/crates/smithay">Smithay</a> required you to provide a trait-based callback for
+handling their events, they are now all converted into being <a href="https://crates.io/crates/calloop">calloop</a> event sources. This makes it much
+easier to handle your global compositor state, by using
+<a href="https://docs.rs/calloop/0.9.0/calloop/index.html">calloop's shared data mechanism</a> which gives you access
+to a <code>&amp;mut T</code> reference of your choice in all your callbacks. Anvil uses this pattern: the
+<a href="https://github.com/Smithay/smithay/blob/7e4e78151aa86df71efb93266205ab3f705f9177/anvil/src/state.rs#L30"><code>AnvilState</code></a>
+centralizes most of the compositor-internal state, allowing us to retain the use of <code>Rc</code> and <code>RefCell</code> to
+minimum.</p>
+<h2>New contributors</h2>
+<p>We are also pleased to have received some significant additions from new contributors, and would like to
+thank them for their involvement:</p>
+<ul>
+<li><a href="https://github.com/PolyMeilex"><strong>@PolyMeilex</strong></a> contributed support for the <a href="https://wayland.app/protocols/tablet-unstable-v2"><code>tablet</code></a>
+  protocol extension for supporting tablet input devices, support for the
+  <a href="https://wayland.app/protocols/xdg-output-unstable-v1"><code>xdg-output</code></a> protocol extension, as well as support
+  for <a href="https://sr.ht/~kennylevinsen/seatd/">libseat</a> as a session backend.</li>
+<li><a href="https://github.com/cmeissl"><strong>@cmeissl</strong></a> ensured Smithay can run on <code>aarch64</code>-based systems, and improved the handlers for the 
+  <code>xdg-shell</code> protocol to correctly track the configure states and support popup surfaces. He also diagnosed
+  several issues in Smithay and Anvil to the point that anvil can
+  <a href="https://github.com/Smithay/smithay/issues/335">almost run Firefox seamlessly</a>.</li>
+<li><a href="https://github.com/psychon"><strong>@psychon</strong></a> tested, debugged and improved the XWayland integration, and provided a minimal WM for Anvil,
+  allowing it to correctly display and interact with X11 applications.</li>
+</ul>
+<h2>Next steps</h2>
+<p>We now feel that Smithay is in a state where it is realistic to start building a serious compositor using it.
+It is not finished, but the fundamental parts are in place and working.</p>
+<p>The next steps we will be taking involve mainly two axes. The first one is introducing support for more Wayland
+protocol extensions, mostly from the <a href="https://gitlab.freedesktop.org/wayland/wayland-protocols/">wayland-protocols</a> standard set, but we also consider support for some
+protocols from the <a href="https://github.com/swaywm/wlr-protocols">wlr-protocols</a> set. The second axis is the construction of higher-level abstractions for
+managing the various parts of the compositor state, and notably the multiple monitors and the organisation of
+the client windows and shell interactions in the compositor graphical space.</p>
+<p>If you are interested in the project, feel free to drop by in our matrix chatroom [<code>#smithay:matrix.org</code>],
+which is also bridged to IRC at <code>#smithay</code> on <a href="https://libera.chat/">libera.chat</a>. Working on Smithay does not necessarily require
+extensive knowledge of the Wayland protocol or Linux internals, and we are happy to mentor anyone interested
+in getting familiar with the project!</p>
+    </div>
+  </article>
+    </div>
+  </div>
+
+  <footer class="footer">
+    <div class="container">
+<div class="row">
+  <ul class="col-sm-6 list-inline">
+      <li class="list-inline-item"><a href="/authors.html">Authors</a></li>
+    <li class="list-inline-item"><a href="/archives.html">Archives</a></li>
+    <li class="list-inline-item"><a href="/categories.html">Categories</a></li>
+  </ul>
+  <p class="col-sm-6 text-sm-right text-muted">
+    Generated by <a href="https://github.com/getpelican/pelican" target="_blank">Pelican</a>
+    / <a href="https://github.com/nairobilug/pelican-alchemy" target="_blank">&#x2728;</a>
+  </p>
+</div>    </div>
+  </footer>
+</body>
+
+</html>

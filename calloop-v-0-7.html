@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <!-- Required meta tags -->
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+
+  <title>  Version 0.7 of calloop | Smithay project
+</title>
+  <link rel="canonical" href="/calloop-v-0-7.html">
+
+
+  <link rel="stylesheet" href="/theme/css/bootstrap.min.css">
+  <link rel="stylesheet" href="/theme/css/font-awesome.min.css">
+  <link rel="stylesheet" href="/theme/css/pygments/default.min.css">
+  <link rel="stylesheet" href="/theme/css/theme.css">
+
+  
+  <meta name="description" content="Announcement of version 0.7 of calloop, and a presentation of the crate.">
+
+
+</head>
+
+<body>
+  <header class="header">
+    <div class="container">
+<div class="row">
+    <div class="col-sm-4">
+      <a href="/">
+        <img class="img-fluid rounded" src=/images/smithay_logo.svg alt="Smithay project">
+      </a>
+    </div>
+  <div class="col-sm-8">
+    <h1 class="title"><a href="/">Smithay project</a></h1>
+      <p class="text-muted">The rusty smithy for wayland compositors</p>
+      <ul class="list-inline">
+            <li class="list-inline-item"><a href="/pages/about.html">About</a></li>
+            <li class="list-inline-item"><a href="/pages/contact.html">Contact</a></li>
+            <li class="list-inline-item"><a href="/pages/documentation.html">Documentation</a></li>
+            <li class=" list-inline-item text-muted">|</li>
+          <li class="list-inline-item"><a class="fa fa-github" href="https://github.com/Smithay" target="_blank"></a></li>
+      </ul>
+  </div>
+</div>    </div>
+  </header>
+
+  <div class="main">
+    <div class="container">
+      <h1>  Version 0.7 of calloop
+</h1>
+      <hr>
+  <article class="article">
+    <header>
+      <ul class="list-inline">
+        <li class="list-inline-item text-muted" title="2020-10-13T19:00:00+02:00">
+          <i class="fa fa-clock-o"></i>
+          Tue 13 October 2020
+        </li>
+        <li class="list-inline-item">
+          <i class="fa fa-folder-open-o"></i>
+          <a href="/category/releases.html">Releases</a>
+        </li>
+          <li class="list-inline-item">
+            <i class="fa fa-user-o"></i>
+              <a href="/author/victor-berger.html">Victor Berger</a>          </li>
+      </ul>
+    </header>
+    <div class="content">
+      <p>We just released <a href="https://github.com/Smithay/calloop/releases/tag/v0.7.0">version 0.7</a> of <a href="https://docs.rs/calloop">calloop</a>, the callback-based event loop that backs <a href="https://github.com/Smithay/smithay">Smithay</a>
+and optionaly <a href="https://github.com/Smithay/client-toolkit">SCTK</a>. As the crate is now getting mature, it is time for a formal presentation!</p>
+<h2>Callbacks, in Rust?</h2>
+<p>It is commonly acknowledged that in Rust, callback-based designs induce a lot of friction, in
+particular regarding state sharing. Nobody wants to have <code>Rc&lt;RefCell&lt;_&gt;&gt;</code> littered all around their
+codebase, and so naturally most of the ecosystem turned to async/await, a design much more natural
+given the constraints of the language.</p>
+<p>However, not all usecases play well with async/await, notably cases were you are in a purely
+reactive context: waiting for events and quickly reacting to them. Indeed, why would you use
+async/await if you never need to <code>.await</code> anything? This is for a large part our context of
+work in Smithay, and so we developed calloop.</p>
+<p>Calloop is designed trying to ease the friction of using callbacks in Rust as much as possible.
+The central issue, state sharing, is managed though some global shared data. A mutable reference
+to some value of your choosing is passed down to all callbacks. As the whole event loop is
+single-threaded, this allows them access to your state without any synchronization or
+reference-counted pointers, as if they were all methods of the same object.</p>
+<p>In a nutshell, calloop is mostly targeted at apps that spend a large portion of their time just
+waiting for something to happen, and need to quickly react to it as opposed to apps that need
+to manage numerous computations or sockets in parallel efficiently, which is the more common
+use of async/await. This processing can be more practical in GUI apps notably, in particular in
+X11 or Wayland contexts, where the communication with the display server is made over an Unix
+socket, which can be monitored by APIs like <code>epoll</code> or <code>kqueue</code>.</p>
+<h2>How is it used?</h2>
+<p>Calloop's core is the <code>EventLoop</code> type. As you can tell by its name, it is the event loop. Once
+you've registered your event sources and their callbacks, you just call <code>EventLoop::run(...)</code> and
+that method will block, running your event loop and dispatching the events appropriately. Setting
+up these callbacks is done though two main components: the <code>LoopHandle</code> object, and the <code>EventSource</code>
+trait.</p>
+<p>The <code>LoopHandle</code> is a handle to the <code>EventLoop</code> (duh). This handle can be cloned and shared in
+different parts of your program. This handle is what is used to setup new callbacks, which can thus
+be done from mostly anywhere, even within a callback! The notable constraint to this is that the
+handle is not shareable between threads. Calloop is meant to run the event loop on a single thread.</p>
+<p>The <code>EventSource</code> trait is a generic interface for "something that can generate events". Anything
+implementing that trait can be associated to a callback in the <code>EventLoop</code>. It will be monitored
+and the associated callback will be invoked every time the event source generates an event. This
+trait is meant to be composable: one can implement a high-level event source by wrapping a low-level
+one and further processing its event before passing them along.</p>
+<p>To give you a feel of what it looks like, take a look at this example extracted from the documentation:</p>
+<div class="highlight"><pre><span></span><code><span class="k">use</span><span class="w"> </span><span class="n">calloop</span>::<span class="p">{</span><span class="n">generic</span>::<span class="n">Generic</span><span class="p">,</span><span class="w"> </span><span class="n">EventLoop</span><span class="p">,</span><span class="w"> </span><span class="n">Interest</span><span class="p">,</span><span class="w"> </span><span class="n">Mode</span><span class="p">};</span><span class="w"></span>
+
+<span class="k">use</span><span class="w"> </span><span class="n">std</span>::<span class="n">time</span>::<span class="n">Duration</span><span class="p">;</span><span class="w"></span>
+
+<span class="k">fn</span> <span class="nf">main</span><span class="p">()</span><span class="w"> </span><span class="p">{</span><span class="w"></span>
+<span class="w">    </span><span class="c1">// Create the event loop</span>
+<span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="k">mut</span><span class="w"> </span><span class="n">event_loop</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">EventLoop</span>::<span class="n">try_new</span><span class="p">()</span><span class="w"></span>
+<span class="w">                </span><span class="p">.</span><span class="n">expect</span><span class="p">(</span><span class="s">&quot;Failed to initialize the event loop!&quot;</span><span class="p">);</span><span class="w"></span>
+<span class="w">    </span><span class="c1">// Retrieve a handle. It is used to insert new sources into the event loop</span>
+<span class="w">    </span><span class="c1">// It can be cloned, allowing you to insert sources from within callbacks</span>
+<span class="w">    </span><span class="kd">let</span><span class="w"> </span><span class="n">handle</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">event_loop</span><span class="p">.</span><span class="n">handle</span><span class="p">();</span><span class="w"></span>
+
+<span class="w">    </span><span class="c1">// Inserting an event source takes this general form</span>
+<span class="w">    </span><span class="c1">// it can also be done from within the callback of an other event source</span>
+<span class="w">    </span><span class="n">handle</span><span class="p">.</span><span class="n">insert_source</span><span class="p">(</span><span class="w"></span>
+<span class="w">        </span><span class="c1">// a type implementing the EventSource trait</span>
+<span class="w">        </span><span class="n">source</span><span class="p">,</span><span class="w"></span>
+<span class="w">        </span><span class="c1">// a callback that is invoked whenever this source generates an event</span>
+<span class="w">        </span><span class="o">|</span><span class="n">event</span><span class="p">,</span><span class="w"> </span><span class="n">metadata</span><span class="p">,</span><span class="w"> </span><span class="n">shared_data</span><span class="o">|</span><span class="w"> </span><span class="p">{</span><span class="w"></span>
+<span class="w">            </span><span class="c1">// This callback is given 3 values:</span>
+<span class="w">            </span><span class="c1">// - the event generated by the source</span>
+<span class="w">            </span><span class="c1">// - &amp;mut access to some metadata, specific to the event source</span>
+<span class="w">            </span><span class="c1">// - &amp;mut access to the global shared data that was passed to EventLoop::dispatch</span>
+<span class="w">        </span><span class="p">}</span><span class="w"></span>
+<span class="w">    </span><span class="p">);</span><span class="w"></span>
+
+<span class="w">    </span><span class="c1">// Actual run of your loop</span>
+<span class="w">    </span><span class="c1">//</span>
+<span class="w">    </span><span class="c1">// Dispatch received events to their callbacks, waiting at most 20 ms for</span>
+<span class="w">    </span><span class="c1">// new events between each batch.</span>
+<span class="w">    </span><span class="c1">//</span>
+<span class="w">    </span><span class="c1">// The `&amp;mut shared_data` is a mutable reference that will be forwarded to all</span>
+<span class="w">    </span><span class="c1">// your callbacks, allowing them to easily share some state</span>
+<span class="w">    </span><span class="n">event_loop</span><span class="p">.</span><span class="n">run</span><span class="p">(</span><span class="n">Duration</span>::<span class="n">from_millis</span><span class="p">(</span><span class="mi">20</span><span class="p">),</span><span class="w"> </span><span class="o">&amp;</span><span class="k">mut</span><span class="w"> </span><span class="n">shared_data</span><span class="p">,</span><span class="w"> </span><span class="o">|</span><span class="n">shared_data</span><span class="o">|</span><span class="w"> </span><span class="p">{</span><span class="w"></span>
+<span class="w">        </span><span class="cm">/*</span>
+<span class="cm">        * Insert here the processing you need to do between each waiting batch (if any)</span>
+<span class="cm">        * like invoking your drawing logic if you&#39;re writing a GUI app for example.</span>
+<span class="cm">        */</span><span class="w"></span>
+<span class="w">    </span><span class="p">});</span><span class="w"></span>
+<span class="p">}</span><span class="w"></span>
+</code></pre></div>
+
+<p>Calloop provides a few implementation of the <code>EventSource</code> trait such as a timer, a channel, and a
+generic adapter for monitoring a file descriptor for read/write readiness. At the moment calloop
+only supports Linux and the *BSD systems, but adding support for other platforms would be a welcome
+contribution!</p>
+<h2>Can it work alongside async/await?</h2>
+<p>Even if the core of your app works best will callbacks, some part of your needs might benefit from
+async/await. Since 0.7, calloop allows you to mix both paradigms. This is supported by two separate
+parts newly added to calloop: an async IO adapter, and an executor.</p>
+<p>The async IO adapter provides an <code>Async</code> type similar to the one provided by the
+<a href="https://docs.rs/async-io"><code>async-io</code></a> crate, but instead of spawning a background thread, it monitors
+the readiness of IO objects directy in the associated <code>EventLoop</code>.</p>
+<p>The executor is, unsuprisingly, yet another implementation of the <code>EventSource</code> trait, which can
+thus be inserted into an <code>EventLoop</code> just like any other event source. It is paired with a
+cloneable <code>Scheduler</code>, which can be used to spawn futures into the executor from anywhere.</p>
+    </div>
+  </article>
+    </div>
+  </div>
+
+  <footer class="footer">
+    <div class="container">
+<div class="row">
+  <ul class="col-sm-6 list-inline">
+      <li class="list-inline-item"><a href="/authors.html">Authors</a></li>
+    <li class="list-inline-item"><a href="/archives.html">Archives</a></li>
+    <li class="list-inline-item"><a href="/categories.html">Categories</a></li>
+  </ul>
+  <p class="col-sm-6 text-sm-right text-muted">
+    Generated by <a href="https://github.com/getpelican/pelican" target="_blank">Pelican</a>
+    / <a href="https://github.com/nairobilug/pelican-alchemy" target="_blank">&#x2728;</a>
+  </p>
+</div>    </div>
+  </footer>
+</body>
+
+</html>
