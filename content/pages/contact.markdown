@@ -7,8 +7,7 @@ Discussions happen either on github issues, or in our chatroom, that you can acc
 any of these (they are all bridged together):
 
 - matrix: [#smithay:matrix.org](https://matrix.to/#/#smithay:matrix.org)
-- gitter: [smithay/Lobby](https://gitter.im/smithay/Lobby)
-- IRC: [#smithay@irc.mozilla.org](https://wiki.mozilla.org/IRC)
+- IRC: [#smithay@libera.chat](https://libera.chat/)
 
 This chatroom is relevant for both discussions about using the crates and
 developing them.
